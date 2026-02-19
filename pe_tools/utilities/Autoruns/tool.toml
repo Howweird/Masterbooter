@@ -1,0 +1,16 @@
+[tool]
+name = "Autoruns"
+description = "Sysinternals tool to view and manage auto-starting programs"
+category = "utilities"
+version = "14.11"
+exe = "Autoruns64.exe"
+is_shell = false
+create_shortcut = true
+enabled_by_default = true
+auto_launch = false
+
+# Official download from Microsoft Sysinternals
+download_url = "https://download.sysinternals.com/files/Autoruns.zip"
+
+# GitHub mirror — tried automatically if the primary download fails
+fallback_url = "https://github.com/Howweird/MasterBooter-Tools/releases/download/v1.0/Autoruns.zip"

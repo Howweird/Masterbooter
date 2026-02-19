@@ -1,0 +1,105 @@
+# ============================================
+# MasterBooter - Cargo.toml
+# ============================================
+# This file defines the project and its dependencies.
+# Think of it like a recipe that tells Rust what ingredients (libraries) to use.
+#
+# To add a new dependency:
+# 1. Add it under [dependencies]
+# 2. Run `cargo build` to download it
+# ============================================
+
+[package]
+name = "masterbooter"
+version = "0.1.0"
+edition = "2021"
+authors = ["MasterBooter Contributors"]
+description = "MasterBooter - Windows deployment toolkit that works in Live Windows, WinPE, and WinRE"
+license = "MIT"
+keywords = ["windows", "deployment", "winpe", "backup", "restore"]
+categories = ["command-line-utilities"]
+
+# This tells Cargo where the main program file is
+[[bin]]
+name = "masterbooter"
+path = "src/main.rs"
+
+# ============================================
+# Dependencies - Libraries we use
+# ============================================
+[dependencies]
+# Slint UI Framework
+# CRITICAL: These features enable WinPE compatibility!
+# - backend-winit: Window management
+# - renderer-software: No GPU required (essential for WinPE)
+# - compat-1-2: Backward compatibility
+slint = { version = "1.9", default-features = false, features = [
+    "backend-winit",
+    "renderer-software",
+    "compat-1-2"
+] }
+
+# Error handling - makes error messages cleaner
+anyhow = "1.0"
+
+# Serialization - for saving/loading settings (JSON, TOML)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"  # For parsing tool.toml manifests
+
+# File/directory operations
+walkdir = "2.4"
+
+# HTTP client for downloading tools
+reqwest = { version = "0.12", features = ["blocking"] }
+
+# ZIP file handling
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+
+# UUID generation for temp folder names
+uuid = { version = "1.11", features = ["v4"] }
+
+# Native file dialogs (open/save file, folder picker)
+rfd = "0.15"
+
+# Clipboard access (copy product keys, etc.)
+arboard = "3.4"
+
+# Self-replacement of running EXE for auto-updates
+# Handles the tricky Windows problem where a running EXE can't be overwritten
+self-replace = "1.5"
+
+# ============================================
+# Build Dependencies - Used during compilation
+# ============================================
+[build-dependencies]
+# Compiles .slint files into Rust code
+slint-build = "1.9"
+# Embed Windows resources (icon) into the EXE
+winres = "0.1"
+
+# ============================================
+# Windows-specific dependencies
+# ============================================
+[target.'cfg(windows)'.dependencies]
+# Windows API access
+winapi = { version = "0.3", features = [
+    "winuser",           # Window management
+    "shellapi",          # Shell operations (open folder, etc.)
+    "processthreadsapi", # Process management
+    "fileapi",           # File operations
+    "handleapi",         # Handle management
+] }
+
+# ============================================
+# Release optimizations
+# ============================================
+[profile.release]
+# Optimize for size (smaller EXE)
+opt-level = "z"
+# Remove debug symbols
+strip = true
+# Link-time optimization (slower build, faster/smaller EXE)
+lto = true
+# Single codegen unit (slower build, better optimization)
+codegen-units = 1

@@ -1,0 +1,14 @@
+# Cargo build configuration for MasterBooter
+# This ensures the application is truly portable with no runtime dependencies
+
+# For x64 Windows builds (our main target)
+[target.x86_64-pc-windows-msvc]
+# Statically link the C runtime (vcruntime140.dll, etc.)
+# This makes the exe fully portable - no VC++ Redistributable needed
+# Set 8MB stack for main thread — Slint's layout engine needs extra stack
+# for deeply nested UIs (WinPE Builder page has many elements)
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-args=/STACK:8388608"]
+
+# For ARM64 Windows builds (development machine)
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-args=/STACK:8388608"]

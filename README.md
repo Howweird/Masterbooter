@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/Masterbooter.svg" alt="MasterBooter Logo" width="200">
+</p>
+
 # MasterBooter
 
 A single portable executable Windows deployment toolkit for IT professionals and MSP/repair shops.
@@ -91,6 +95,13 @@ docs/               Additional documentation
 - **Language**: Rust
 - **UI Framework**: [Slint](https://slint.dev/) with software rendering (no GPU required)
 - **Why Rust/Slint?** WPF and other .NET frameworks don't work in WinPE. Slint's software renderer runs everywhere, including minimal Windows environments.
+
+## Acknowledgments
+
+MasterBooter was inspired by:
+
+- **[Windows Setup Helper](https://github.com/jmclaren7/windows-setup-helper)** by jmclaren7 — PE tool integration, SFX apps, and VNC workflows
+- **[GhostWin](https://github.com/CK-Technology/ghostwin)** by CK-Technology — WIM handling, driver injection, and ISO verification
 
 ## License
 

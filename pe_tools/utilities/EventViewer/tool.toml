@@ -1,0 +1,24 @@
+# ============================================
+# Event Viewer (PE) — Windows Event Log Viewer
+# ============================================
+# Examines Windows event logs from WinPE or live Windows.
+# Helps diagnose boot/crash issues from offline Windows.
+# Uses DevExpress UI components for grid/tree views.
+# From pcassistsoftware.co.uk — .NET Framework 4.8 (needs WinPE-NetFx in PE)
+
+[tool]
+name = "Event Viewer"
+description = "Examine Windows event logs from WinPE or live Windows"
+category = "utilities"
+version = "1.0"
+exe = "Event Viewer PE.exe"
+is_shell = false
+create_shortcut = true
+enabled_by_default = true
+auto_launch = false
+
+# Direct download from pcassistsoftware.co.uk
+download_url = "https://www.pcassistsoftware.co.uk/downloads/Event_Viewer_PE.7z"
+
+# GitHub mirror — tried automatically if the primary download fails
+fallback_url = "https://github.com/Howweird/MasterBooter-Tools/releases/download/v1.0/EventViewer.zip"

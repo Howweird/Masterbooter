@@ -1,0 +1,23 @@
+# ============================================
+# Web Browser (PE) — Compact Browser
+# ============================================
+# Lightweight web browser for WinPE and live Windows.
+# Useful for downloading drivers or looking up documentation.
+# From pcassistsoftware.co.uk — .NET Framework 4.8 (needs WinPE-NetFx in PE)
+
+[tool]
+name = "Web Browser"
+description = "Compact portable web browser for WinPE and live Windows"
+category = "network"
+version = "1.0"
+exe = "Web Browser (PE).exe"
+is_shell = false
+create_shortcut = true
+enabled_by_default = true
+auto_launch = false
+
+# Direct download from pcassistsoftware.co.uk
+download_url = "https://www.pcassistsoftware.co.uk/downloads/Web_Browser_PE.7z"
+
+# GitHub mirror — tried automatically if the primary download fails
+fallback_url = "https://github.com/Howweird/MasterBooter-Tools/releases/download/v1.0/WebBrowser.zip"

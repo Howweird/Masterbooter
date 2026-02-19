@@ -1,0 +1,13 @@
+[tool]
+name = "WinXShell"
+description = "Desktop shell with taskbar, start menu, and system tray for WinPE"
+category = "shell"
+version = "2.5"
+exe = "WinXShell_x64.exe"
+is_shell = true
+create_shortcut = false
+enabled_by_default = true
+auto_launch = false
+
+# GitHub-hosted download (MasterBooter-Tools releases)
+download_url = "https://github.com/Howweird/Masterbooter-Tools/releases/download/v1.0/WinXShell.zip"

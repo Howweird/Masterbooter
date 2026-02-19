@@ -1,0 +1,13 @@
+[tool]
+name = "7-Zip"
+description = "File archiver with high compression ratio"
+category = "utilities"
+version = "24.09"
+exe = "7zFM.exe"
+is_shell = false
+create_shortcut = true
+enabled_by_default = true
+auto_launch = false
+
+# GitHub-hosted download (MasterBooter-Tools releases)
+download_url = "https://github.com/Howweird/Masterbooter-Tools/releases/download/v1.0/7-Zip.zip"

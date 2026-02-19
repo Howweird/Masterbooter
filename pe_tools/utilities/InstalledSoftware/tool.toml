@@ -1,0 +1,24 @@
+# ============================================
+# Installed Software (PE) — Software Inventory
+# ============================================
+# Lists software installed on host Windows systems from WinPE or live Windows.
+# Useful for checking what was installed before reimaging.
+# Uses DevExpress UI components for grid/tree views.
+# From pcassistsoftware.co.uk — .NET Framework 4.8 (needs WinPE-NetFx in PE)
+
+[tool]
+name = "Installed Software"
+description = "List installed software on host systems from WinPE or live Windows"
+category = "utilities"
+version = "1.0"
+exe = "Installed Software PE.exe"
+is_shell = false
+create_shortcut = true
+enabled_by_default = true
+auto_launch = false
+
+# Direct download from pcassistsoftware.co.uk
+download_url = "https://www.pcassistsoftware.co.uk/downloads/Installed_Software_PE.7z"
+
+# GitHub mirror — tried automatically if the primary download fails
+fallback_url = "https://github.com/Howweird/MasterBooter-Tools/releases/download/v1.0/InstalledSoftware.zip"

@@ -1,0 +1,32 @@
+<!--?xml version="1.0" encoding="UTF-8"?-->
+<svg width="800" height="1000" viewBox="0 0 800 1000" xmlns="http://www.w3.org/2000/svg">
+
+  <g fill="none" stroke="black" stroke-width="60" stroke-linecap="round" stroke-linejoin="round">
+
+    <!-- Top M -->
+    <path d="M150 350 
+             L150 120 
+             L400 350 
+             L650 120 
+             L650 350"></path>
+
+    <!-- Middle Horizontal Bar -->
+    <line x1="150" y1="420" x2="650" y2="420"></line>
+
+    <!-- Bottom Left U -->
+    <path d="M150 420 
+             L150 750 
+             Q150 900 300 900 
+             Q450 900 450 750 
+             L450 420"></path>
+
+    <!-- Bottom Right U -->
+    <path d="M350 420 
+             L350 750 
+             Q350 900 500 900 
+             Q650 900 650 750 
+             L650 420"></path>
+
+  </g>
+
+</svg>

@@ -1,0 +1,23 @@
+# ============================================
+# Disk Check (PE) — SMART Status Monitor
+# ============================================
+# Monitors hard drive SMART status using smartctl.
+# Has both x64 and x86 versions. We use x64.
+# From pcassistsoftware.co.uk — .NET Framework 4.8 (needs WinPE-NetFx in PE)
+
+[tool]
+name = "Disk Check"
+description = "Monitor hard drive SMART status in WinPE and live Windows"
+category = "disk"
+version = "1.0"
+exe = "Disk Check (PE) x64.exe"
+is_shell = false
+create_shortcut = true
+enabled_by_default = true
+auto_launch = false
+
+# Direct download from pcassistsoftware.co.uk
+download_url = "https://www.pcassistsoftware.co.uk/downloads/Disk_Check_PE.7z"
+
+# GitHub mirror — tried automatically if the primary download fails
+fallback_url = "https://github.com/Howweird/MasterBooter-Tools/releases/download/v1.0/DiskCheck.zip"

@@ -1,0 +1,37 @@
+# Build output
+target/
+dist/
+github_release/
+
+# Driver packs (too large for git, distributed separately)
+drivers/
+
+# Backup tool binaries (downloaded at runtime)
+backup_tools/
+
+# PE tools: binaries are ignored via pe_tools/.gitignore
+# Only tool.toml manifests are tracked
+
+# Tool config (generated at runtime)
+pe_tools_config.json
+
+# Saved product keys (sensitive - never commit)
+saved_keys.json
+
+# Version tracking file (auto-generated at runtime)
+masterbooter_version.json
+
+# Old/temporary files
+src_old/
+nul
+
+# IDE files
+.vs/
+*.user
+
+# Claude Code local settings (user-specific permissions)
+.claude/
+
+# OS files
+Thumbs.db
+Desktop.ini
