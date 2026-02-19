@@ -622,7 +622,39 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    // ============================================
+    // MULTI-KEY MANAGEMENT CALLBACKS
+    // ============================================
+    // saved_keys.json stores an array of WindowsKeyInfo entries — one per machine.
+    // The Deploy page has a ComboBox to select which machine's key to load.
+
+    /// Helper: refresh the saved keys ComboBox in the UI.
+    /// Reads saved_keys.json and updates the ComboBox model with "HOSTNAME (date)" labels.
+    fn refresh_saved_keys_ui(ui: &MainWindow) {
+        let keys = deploy::load_saved_keys();
+        let labels = deploy::format_saved_key_labels(&keys);
+
+        // Convert to a Slint string model for the ComboBox
+        let model = std::rc::Rc::new(slint::VecModel::from(
+            labels.iter().map(|s| slint::SharedString::from(s.as_str())).collect::<Vec<_>>()
+        ));
+        ui.set_deploy_saved_key_labels(model.into());
+
+        // Reset selection to first item if any keys exist, or -1 if empty
+        if keys.is_empty() {
+            ui.set_deploy_saved_key_index(-1);
+        } else if ui.get_deploy_saved_key_index() < 0 || ui.get_deploy_saved_key_index() >= keys.len() as i32 {
+            ui.set_deploy_saved_key_index(0);
+        }
+    }
+
+    // On startup, populate the saved keys ComboBox
+    if let Some(ui) = ui_handle.upgrade() {
+        refresh_saved_keys_ui(&ui);
+    }
+
     // Callback: Save Key — writes detected keys to saved_keys.json next to EXE
+    // Now supports multiple keys: appends/updates by hostname, then refreshes the ComboBox.
     ui.on_backup_save_key({
         let ui = ui_handle.clone();
         move || {
@@ -634,12 +666,6 @@ fn main() -> Result<(), slint::PlatformError> {
                     installed_key: ui.get_backup_installed_key().to_string(),
                     edition: ui.get_backup_key_edition().to_string(),
                     status: ui.get_backup_key_status().to_string(),
-                    hostname: String::new(), // Will be filled from saved data
-                    date: String::new(),     // Will be filled from saved data
-                };
-
-                // Re-detect to get hostname and date (or use cached)
-                let info_with_meta = deploy::WindowsKeyInfo {
                     hostname: {
                         // Quick hostname detection
                         std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Unknown".to_string())
@@ -656,15 +682,16 @@ fn main() -> Result<(), slint::PlatformError> {
                         let day = remaining_days % 30 + 1;
                         format!("{}-{:02}-{:02}", years, month.min(12), day.min(31))
                     },
-                    ..info
                 };
 
-                match deploy::save_keys_to_file(&info_with_meta) {
+                match deploy::save_keys_to_file(&info) {
                     Ok(()) => {
                         ui.set_backup_key_saved_info(
                             format!("Saved to saved_keys.json (from {} on {})",
-                                info_with_meta.hostname, info_with_meta.date).into());
+                                info.hostname, info.date).into());
                         ui.set_status_text("Product key saved to file".into());
+                        // Refresh the Deploy page ComboBox so the new key appears immediately
+                        refresh_saved_keys_ui(&ui);
                     }
                     Err(e) => {
                         ui.set_status_text(format!("Failed to save key: {}", e).into());
@@ -674,36 +701,81 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    // Callback: Load Saved Key — reads saved_keys.json and fills the deploy product key field
-    ui.on_deploy_load_saved_key({
+    // Callback: Load Saved Key At Index — reads the key at the given ComboBox index
+    // and fills the deploy product key field.
+    ui.on_deploy_load_saved_key_at({
         let ui = ui_handle.clone();
-        move || {
-            println!("Deploy: Load saved key");
+        move |index: i32| {
+            println!("Deploy: Load saved key at index {}", index);
             if let Some(ui) = ui.upgrade() {
-                match deploy::load_saved_keys() {
-                    Some(info) => {
-                        // Prefer the installed key (this is the active key the user is using).
-                        // Fall back to OEM key if no installed key was detected.
-                        let key_to_use = if !info.installed_key.is_empty() {
-                            info.installed_key.clone()
-                        } else if !info.oem_key.is_empty() {
-                            info.oem_key.clone()
-                        } else {
-                            String::new()
-                        };
+                let keys = deploy::load_saved_keys();
 
-                        if !key_to_use.is_empty() {
-                            ui.set_deploy_product_key(key_to_use.into());
-                            ui.set_status_text(format!("Loaded key from {} (backed up {})",
-                                info.hostname, info.date).into());
-                        } else {
-                            ui.set_status_text("Saved key file found but no keys were stored".into());
-                        }
+                if index < 0 || index as usize >= keys.len() {
+                    ui.set_status_text("No saved key selected. Use Backup page to detect and save first.".into());
+                    return;
+                }
+
+                let info = &keys[index as usize];
+
+                // Prefer the installed key (this is the active key the user is using).
+                // Fall back to OEM key if no installed key was detected.
+                let key_to_use = if !info.installed_key.is_empty() {
+                    info.installed_key.clone()
+                } else if !info.oem_key.is_empty() {
+                    info.oem_key.clone()
+                } else {
+                    String::new()
+                };
+
+                if !key_to_use.is_empty() {
+                    ui.set_deploy_product_key(key_to_use.into());
+                    ui.set_status_text(format!("Loaded key from {} (backed up {})",
+                        info.hostname, info.date).into());
+                } else {
+                    ui.set_status_text("Selected key entry has no product key stored".into());
+                }
+            }
+        }
+    });
+
+    // Callback: Delete Saved Key — removes the selected key entry from saved_keys.json
+    ui.on_deploy_delete_saved_key({
+        let ui = ui_handle.clone();
+        move |index: i32| {
+            println!("Deploy: Delete saved key at index {}", index);
+            if let Some(ui) = ui.upgrade() {
+                let keys = deploy::load_saved_keys();
+
+                if index < 0 || index as usize >= keys.len() {
+                    ui.set_status_text("No saved key selected to delete".into());
+                    return;
+                }
+
+                let hostname = keys[index as usize].hostname.clone();
+
+                match deploy::delete_saved_key(&hostname) {
+                    Ok(true) => {
+                        ui.set_status_text(format!("Deleted saved key for '{}'", hostname).into());
+                        // Refresh the ComboBox to reflect the deletion
+                        refresh_saved_keys_ui(&ui);
                     }
-                    None => {
-                        ui.set_status_text("No saved key file found. Use Backup page to detect and save first.".into());
+                    Ok(false) => {
+                        ui.set_status_text(format!("Key for '{}' not found", hostname).into());
+                    }
+                    Err(e) => {
+                        ui.set_status_text(format!("Failed to delete key: {}", e).into());
                     }
                 }
+            }
+        }
+    });
+
+    // Callback: Refresh Saved Keys — re-reads saved_keys.json and updates the ComboBox
+    ui.on_deploy_refresh_saved_keys({
+        let ui = ui_handle.clone();
+        move || {
+            if let Some(ui) = ui.upgrade() {
+                refresh_saved_keys_ui(&ui);
             }
         }
     });
@@ -1001,9 +1073,11 @@ fn main() -> Result<(), slint::PlatformError> {
                 // Get current settings
                 let source_type = ui.get_pe_source().to_string();
                 let output_path_str: String = ui.get_pe_output_path().to_string();
-                let include_drivers = ui.get_pe_include_drivers();
-                let include_tools = ui.get_pe_include_tools();
-                let include_network = ui.get_pe_include_network();
+                // Drivers, tools, and network are always included.
+                // Disabling any of these produces broken PE images, so there's
+                // no UI toggle — they're hardcoded to true.
+                let include_drivers = true;
+                let include_tools = true;
 
                 // Get the appropriate source path based on source type
                 let winre_path_str: String = ui.get_winre_path().to_string();
@@ -1253,8 +1327,8 @@ fn main() -> Result<(), slint::PlatformError> {
                     // - User-provided Drivers/ folder next to the EXE
                     driver_paths: Vec::new(),
                     // WiFi support: extracts WLAN files from ISO's install.wim into PE
-                    // Both the "Network Support" checkbox AND the WiFi package toggle must be on
-                    enable_wifi: include_network && pkg_wifi,
+                    // Network support is always included — WiFi depends only on the package toggle
+                    enable_wifi: pkg_wifi,
                     install_packages,
                     enabled_packages,
                     apply_fixes,
@@ -1799,13 +1873,20 @@ fn main() -> Result<(), slint::PlatformError> {
                 };
 
                 let xml = deploy::generate_autounattend(&config);
-                // Write to temp and tell user where to find it
-                let temp_path = std::env::temp_dir().join("autounattend_preview.xml");
-                if let Ok(_) = std::fs::write(&temp_path, &xml) {
-                    ui.set_status_text(format!("XML preview saved to: {}", temp_path.display()).into());
-                    // Try to open it
+                // Save the preview XML next to the EXE (e.g., on the USB drive)
+                // instead of the temp folder. This way it's easy to find and stays
+                // with the deployment toolkit. Falls back to temp dir if we can't
+                // determine the EXE location (shouldn't happen in practice).
+                let preview_path = std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                    .unwrap_or_else(std::env::temp_dir)
+                    .join("autounattend_preview.xml");
+                if let Ok(_) = std::fs::write(&preview_path, &xml) {
+                    ui.set_status_text(format!("XML preview saved to: {}", preview_path.display()).into());
+                    // Try to open it in Notepad so the user can review
                     let _ = std::process::Command::new("notepad.exe")
-                        .arg(&temp_path)
+                        .arg(&preview_path)
                         .spawn();
                 } else {
                     ui.set_status_text(format!("Generated {} bytes of XML", xml.len()).into());
@@ -2263,11 +2344,16 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     // Check for saved product keys on startup (from a previous session)
-    // If saved_keys.json exists next to the EXE, show the saved info in the UI
-    if let Some(saved) = deploy::load_saved_keys() {
-        ui.set_backup_key_saved_info(
-            slint::SharedString::from(format!("Previously saved from {} on {}",
-                saved.hostname, saved.date)));
+    // If saved_keys.json exists next to the EXE, show the saved info in the UI.
+    // With multi-key support, we show how many keys are saved.
+    {
+        let saved_keys = deploy::load_saved_keys();
+        if !saved_keys.is_empty() {
+            let last = &saved_keys[saved_keys.len() - 1]; // Most recent entry
+            ui.set_backup_key_saved_info(
+                slint::SharedString::from(format!("{} key(s) saved (latest: {} on {})",
+                    saved_keys.len(), last.hostname, last.date)));
+        }
     }
 
     // ============================================

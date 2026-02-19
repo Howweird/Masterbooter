@@ -609,9 +609,8 @@ export component MainWindow inherits Window {
     //   "ISO_RE"   - Use Windows ISO for WinRE (recovery tools)
     in-out property <string> pe-source: "ISO_PE";
     in-out property <string> pe-output-path: "";
-    in-out property <bool> pe-include-drivers: true;
-    in-out property <bool> pe-include-tools: true;
-    in-out property <bool> pe-include-network: true;
+    // NOTE: Drivers, tools, and network support are ALWAYS included.
+    // (Removing them produces broken PE images, so no UI toggle is needed.)
 
     // Build progress
     in-out property <bool> pe-building: false;
@@ -825,8 +824,14 @@ export component MainWindow inherits Window {
     callback backup-copy-key(string);            // Copy a key string to clipboard
     callback backup-save-key();                  // Save detected keys to saved_keys.json
 
-    // Deploy: load saved key
-    callback deploy-load-saved-key();            // Load key from saved_keys.json into product key field
+    // Deploy: saved keys management (multi-key support)
+    // The ComboBox shows all saved keys by "HOSTNAME (date)" label.
+    // User selects one, clicks Load to fill the product key field, or Delete to remove it.
+    in-out property <[string]> deploy-saved-key-labels;  // Labels for saved keys ComboBox
+    in-out property <int> deploy-saved-key-index: -1;    // Currently selected index in ComboBox (-1 = none)
+    callback deploy-load-saved-key-at(int);              // Load key at given index into product key field
+    callback deploy-delete-saved-key(int);               // Delete key at given index
+    callback deploy-refresh-saved-keys();                // Refresh the ComboBox model from saved_keys.json
 
     // WinPE Builder callbacks
     callback pe-detect-winre();           // Detect local WinRE and all dependencies
@@ -1805,10 +1810,30 @@ export component MainWindow inherits Window {
                                             placeholder-text: "Leave empty for generic key (selects edition only)";
                                             font-size: 12px;
                                         }
+                                    }
+                                    // Saved keys row: ComboBox dropdown + Load + Delete buttons
+                                    // IT pros service multiple machines — this lets them pick which
+                                    // machine's key to load into the product key field above.
+                                    HorizontalBox {
+                                        spacing: 8px;
+                                        Text { text: "Saved Keys:"; color: Theme.text-secondary; font-size: 12px; font-weight: 600; vertical-alignment: center; width: 90px; }
+                                        ComboBox {
+                                            horizontal-stretch: 1;
+                                            model: deploy-saved-key-labels;
+                                            current-index <=> deploy-saved-key-index;
+                                            // Note: no action on select — user clicks Load to apply
+                                        }
+                                        // Load button — fills the product key field from the selected entry
                                         Rectangle {
-                                            width: 85px; height: 28px; background: Theme.accent-blue; border-radius: 4px;
-                                            Text { text: "Load Saved"; color: white; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                            TouchArea { clicked => { deploy-load-saved-key(); } }
+                                            width: 55px; height: 28px; background: Theme.accent-blue; border-radius: 4px;
+                                            Text { text: "Load"; color: white; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                                            TouchArea { clicked => { deploy-load-saved-key-at(deploy-saved-key-index); } }
+                                        }
+                                        // Delete button — removes the selected entry from saved_keys.json
+                                        Rectangle {
+                                            width: 55px; height: 28px; background: Theme.accent-red; border-radius: 4px;
+                                            Text { text: "Delete"; color: white; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                                            TouchArea { clicked => { deploy-delete-saved-key(deploy-saved-key-index); } }
                                         }
                                     }
                                     HorizontalBox {
@@ -2567,131 +2592,8 @@ export component MainWindow inherits Window {
                                         }
                                     }
 
-                                    // Include options
-                                    HorizontalBox {
-                                        spacing: 12px;
-
-                                        Text {
-                                            text: "Include:";
-                                            color: Theme.text-secondary;
-                                            font-size: 13px;
-                                            vertical-alignment: center;
-                                            width: 120px;
-                                        }
-
-                                        // Drivers checkbox
-                                        HorizontalBox {
-                                            spacing: 6px;
-                                            Rectangle {
-                                                width: 18px;
-                                                height: 18px;
-                                                background: pe-include-drivers ? Theme.accent-teal : Theme.button-bg;
-                                                border-radius: 4px;
-
-                                                Text {
-                                                    text: pe-include-drivers ? "✓" : "";
-                                                    color: Theme.sidebar-bg;
-                                                    font-size: 12px;
-                                                    horizontal-alignment: center;
-                                                    vertical-alignment: center;
-                                                }
-
-                                                TouchArea {
-                                                    clicked => { pe-include-drivers = !pe-include-drivers; }
-                                                }
-                                            }
-                                            VerticalBox {
-                                                spacing: 2px;
-                                                Text {
-                                                    text: "Drivers";
-                                                    color: Theme.text-primary;
-                                                    font-size: 12px;
-                                                    vertical-alignment: center;
-                                                }
-                                                Text {
-                                                    text: "Inject hardware drivers into PE (WiFi, storage, etc.)";
-                                                    color: Theme.text-muted;
-                                                    font-size: 9px;
-                                                }
-                                            }
-                                        }
-
-                                        // Tools checkbox
-                                        HorizontalBox {
-                                            spacing: 6px;
-                                            Rectangle {
-                                                width: 18px;
-                                                height: 18px;
-                                                background: pe-include-tools ? Theme.accent-teal : Theme.button-bg;
-                                                border-radius: 4px;
-
-                                                Text {
-                                                    text: pe-include-tools ? "✓" : "";
-                                                    color: Theme.sidebar-bg;
-                                                    font-size: 12px;
-                                                    horizontal-alignment: center;
-                                                    vertical-alignment: center;
-                                                }
-
-                                                TouchArea {
-                                                    clicked => { pe-include-tools = !pe-include-tools; }
-                                                }
-                                            }
-                                            VerticalBox {
-                                                spacing: 2px;
-                                                Text {
-                                                    text: "MasterBooter Tools";
-                                                    color: Theme.text-primary;
-                                                    font-size: 12px;
-                                                    vertical-alignment: center;
-                                                }
-                                                Text {
-                                                    text: "Bundle PE tools (WinXShell, 7-Zip, PENetwork, etc.)";
-                                                    color: Theme.text-muted;
-                                                    font-size: 9px;
-                                                }
-                                            }
-                                        }
-
-                                        // Network/WiFi checkbox
-                                        HorizontalBox {
-                                            spacing: 6px;
-                                            Rectangle {
-                                                width: 18px;
-                                                height: 18px;
-                                                background: pe-include-network ? Theme.accent-teal : Theme.button-bg;
-                                                border-radius: 4px;
-
-                                                Text {
-                                                    text: pe-include-network ? "✓" : "";
-                                                    color: Theme.sidebar-bg;
-                                                    font-size: 12px;
-                                                    horizontal-alignment: center;
-                                                    vertical-alignment: center;
-                                                }
-
-                                                TouchArea {
-                                                    clicked => { pe-include-network = !pe-include-network; }
-                                                }
-                                            }
-                                            VerticalBox {
-                                                spacing: 2px;
-                                                Text {
-                                                    text: "Network Support";
-                                                    color: Theme.text-primary;
-                                                    font-size: 12px;
-                                                    vertical-alignment: center;
-                                                }
-                                                Text {
-                                                    text: "WiFi + wired networking (extracts drivers from ISO)";
-                                                    color: Theme.text-muted;
-                                                    font-size: 9px;
-                                                }
-                                            }
-                                        }
-
-                                        Rectangle { horizontal-stretch: 1; }
-                                    }
+                                    // NOTE: Drivers, tools, and network support are always included.
+                                    // (Removed the Include checkboxes — disabling them breaks PE.)
                                 }
                             }
 
@@ -2794,37 +2696,43 @@ export component MainWindow inherits Window {
                                                 font-weight: 600;
                                             }
 
-                                            // WinXShell
-                                            HorizontalBox {
-                                                spacing: 6px;
-                                                Rectangle { width: 16px; height: 16px; background: pe-tool-winxshell ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
-                                                    Text { text: pe-tool-winxshell ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
-                                                    TouchArea { clicked => { pe-tool-winxshell = !pe-tool-winxshell; } }
+                                            // WinXShell — wrapped in TouchArea for hover detection + click toggle
+                                            ta-winxshell := TouchArea {
+                                                clicked => { pe-tool-winxshell = !pe-tool-winxshell; }
+                                                HorizontalBox {
+                                                    spacing: 6px;
+                                                    Rectangle { width: 16px; height: 16px; background: pe-tool-winxshell ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
+                                                        Text { text: pe-tool-winxshell ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                    }
+                                                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-winxshell-present ? Theme.accent-green : Theme.accent-orange; }
+                                                    Text { text: "WinXShell"; color: Theme.text-primary; font-size: 11px; }
                                                 }
-                                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-winxshell-present ? Theme.accent-green : Theme.accent-orange; }
-                                                Text { text: "WinXShell"; color: Theme.text-primary; font-size: 11px; }
                                             }
 
-                                            // Explorer++
-                                            HorizontalBox {
-                                                spacing: 6px;
-                                                Rectangle { width: 16px; height: 16px; background: pe-tool-explorer ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
-                                                    Text { text: pe-tool-explorer ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
-                                                    TouchArea { clicked => { pe-tool-explorer = !pe-tool-explorer; } }
+                                            // Explorer++ — hover + click
+                                            ta-explorer := TouchArea {
+                                                clicked => { pe-tool-explorer = !pe-tool-explorer; }
+                                                HorizontalBox {
+                                                    spacing: 6px;
+                                                    Rectangle { width: 16px; height: 16px; background: pe-tool-explorer ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
+                                                        Text { text: pe-tool-explorer ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                    }
+                                                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-explorer-present ? Theme.accent-green : Theme.accent-orange; }
+                                                    Text { text: "Explorer++"; color: Theme.text-primary; font-size: 11px; }
                                                 }
-                                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-explorer-present ? Theme.accent-green : Theme.accent-orange; }
-                                                Text { text: "Explorer++"; color: Theme.text-primary; font-size: 11px; }
                                             }
 
-                                            // File Explorer (PE) — dual-pane explorer from pcassistsoftware
-                                            HorizontalBox {
-                                                spacing: 6px;
-                                                Rectangle { width: 16px; height: 16px; background: pe-tool-fileexplorer ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
-                                                    Text { text: pe-tool-fileexplorer ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
-                                                    TouchArea { clicked => { pe-tool-fileexplorer = !pe-tool-fileexplorer; } }
+                                            // File Explorer (PE) — dual-pane explorer, hover + click
+                                            ta-fileexplorer := TouchArea {
+                                                clicked => { pe-tool-fileexplorer = !pe-tool-fileexplorer; }
+                                                HorizontalBox {
+                                                    spacing: 6px;
+                                                    Rectangle { width: 16px; height: 16px; background: pe-tool-fileexplorer ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
+                                                        Text { text: pe-tool-fileexplorer ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                    }
+                                                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-fileexplorer-present ? Theme.accent-green : Theme.accent-orange; }
+                                                    Text { text: "File Explorer"; color: Theme.text-primary; font-size: 11px; }
                                                 }
-                                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-fileexplorer-present ? Theme.accent-green : Theme.accent-orange; }
-                                                Text { text: "File Explorer"; color: Theme.text-primary; font-size: 11px; }
                                             }
                                         }
 
@@ -2840,26 +2748,30 @@ export component MainWindow inherits Window {
                                                 font-weight: 600;
                                             }
 
-                                            // PENetwork
-                                            HorizontalBox {
-                                                spacing: 6px;
-                                                Rectangle { width: 16px; height: 16px; background: pe-tool-penetwork ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
-                                                    Text { text: pe-tool-penetwork ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
-                                                    TouchArea { clicked => { pe-tool-penetwork = !pe-tool-penetwork; } }
+                                            // PENetwork — hover + click
+                                            ta-penetwork := TouchArea {
+                                                clicked => { pe-tool-penetwork = !pe-tool-penetwork; }
+                                                HorizontalBox {
+                                                    spacing: 6px;
+                                                    Rectangle { width: 16px; height: 16px; background: pe-tool-penetwork ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
+                                                        Text { text: pe-tool-penetwork ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                    }
+                                                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-penetwork-present ? Theme.accent-green : Theme.accent-orange; }
+                                                    Text { text: "PENetwork"; color: Theme.text-primary; font-size: 11px; }
                                                 }
-                                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-penetwork-present ? Theme.accent-green : Theme.accent-orange; }
-                                                Text { text: "PENetwork"; color: Theme.text-primary; font-size: 11px; }
                                             }
 
-                                            // Web Browser (PE) — compact browser from pcassistsoftware
-                                            HorizontalBox {
-                                                spacing: 6px;
-                                                Rectangle { width: 16px; height: 16px; background: pe-tool-webbrowser ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
-                                                    Text { text: pe-tool-webbrowser ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
-                                                    TouchArea { clicked => { pe-tool-webbrowser = !pe-tool-webbrowser; } }
+                                            // Web Browser (PE) — compact browser, hover + click
+                                            ta-webbrowser := TouchArea {
+                                                clicked => { pe-tool-webbrowser = !pe-tool-webbrowser; }
+                                                HorizontalBox {
+                                                    spacing: 6px;
+                                                    Rectangle { width: 16px; height: 16px; background: pe-tool-webbrowser ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
+                                                        Text { text: pe-tool-webbrowser ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                    }
+                                                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-webbrowser-present ? Theme.accent-green : Theme.accent-orange; }
+                                                    Text { text: "Web Browser"; color: Theme.text-primary; font-size: 11px; }
                                                 }
-                                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-webbrowser-present ? Theme.accent-green : Theme.accent-orange; }
-                                                Text { text: "Web Browser"; color: Theme.text-primary; font-size: 11px; }
                                             }
                                         }
 
@@ -2875,37 +2787,43 @@ export component MainWindow inherits Window {
                                                 font-weight: 600;
                                             }
 
-                                            // CrystalDiskInfo
-                                            HorizontalBox {
-                                                spacing: 6px;
-                                                Rectangle { width: 16px; height: 16px; background: pe-tool-crystaldisk ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
-                                                    Text { text: pe-tool-crystaldisk ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
-                                                    TouchArea { clicked => { pe-tool-crystaldisk = !pe-tool-crystaldisk; } }
+                                            // CrystalDiskInfo — hover + click
+                                            ta-crystaldisk := TouchArea {
+                                                clicked => { pe-tool-crystaldisk = !pe-tool-crystaldisk; }
+                                                HorizontalBox {
+                                                    spacing: 6px;
+                                                    Rectangle { width: 16px; height: 16px; background: pe-tool-crystaldisk ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
+                                                        Text { text: pe-tool-crystaldisk ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                    }
+                                                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-crystaldisk-present ? Theme.accent-green : Theme.accent-orange; }
+                                                    Text { text: "CrystalDiskInfo"; color: Theme.text-primary; font-size: 11px; }
                                                 }
-                                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-crystaldisk-present ? Theme.accent-green : Theme.accent-orange; }
-                                                Text { text: "CrystalDiskInfo"; color: Theme.text-primary; font-size: 11px; }
                                             }
 
-                                            // Disk Check (PE) — SMART monitoring from pcassistsoftware
-                                            HorizontalBox {
-                                                spacing: 6px;
-                                                Rectangle { width: 16px; height: 16px; background: pe-tool-diskcheck ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
-                                                    Text { text: pe-tool-diskcheck ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
-                                                    TouchArea { clicked => { pe-tool-diskcheck = !pe-tool-diskcheck; } }
+                                            // Disk Check (PE) — SMART monitoring, hover + click
+                                            ta-diskcheck := TouchArea {
+                                                clicked => { pe-tool-diskcheck = !pe-tool-diskcheck; }
+                                                HorizontalBox {
+                                                    spacing: 6px;
+                                                    Rectangle { width: 16px; height: 16px; background: pe-tool-diskcheck ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
+                                                        Text { text: pe-tool-diskcheck ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                    }
+                                                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-diskcheck-present ? Theme.accent-green : Theme.accent-orange; }
+                                                    Text { text: "Disk Check"; color: Theme.text-primary; font-size: 11px; }
                                                 }
-                                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-diskcheck-present ? Theme.accent-green : Theme.accent-orange; }
-                                                Text { text: "Disk Check"; color: Theme.text-primary; font-size: 11px; }
                                             }
 
-                                            // DISM Tool — GUI for DISM from pcassistsoftware
-                                            HorizontalBox {
-                                                spacing: 6px;
-                                                Rectangle { width: 16px; height: 16px; background: pe-tool-dismtool ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
-                                                    Text { text: pe-tool-dismtool ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
-                                                    TouchArea { clicked => { pe-tool-dismtool = !pe-tool-dismtool; } }
+                                            // DISM Tool — GUI for DISM, hover + click
+                                            ta-dismtool := TouchArea {
+                                                clicked => { pe-tool-dismtool = !pe-tool-dismtool; }
+                                                HorizontalBox {
+                                                    spacing: 6px;
+                                                    Rectangle { width: 16px; height: 16px; background: pe-tool-dismtool ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
+                                                        Text { text: pe-tool-dismtool ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                    }
+                                                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-dismtool-present ? Theme.accent-green : Theme.accent-orange; }
+                                                    Text { text: "DISM Tool"; color: Theme.text-primary; font-size: 11px; }
                                                 }
-                                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-dismtool-present ? Theme.accent-green : Theme.accent-orange; }
-                                                Text { text: "DISM Tool"; color: Theme.text-primary; font-size: 11px; }
                                             }
                                         }
 
@@ -2921,48 +2839,56 @@ export component MainWindow inherits Window {
                                                 font-weight: 600;
                                             }
 
-                                            // 7-Zip
-                                            HorizontalBox {
-                                                spacing: 6px;
-                                                Rectangle { width: 16px; height: 16px; background: pe-tool-7zip ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
-                                                    Text { text: pe-tool-7zip ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
-                                                    TouchArea { clicked => { pe-tool-7zip = !pe-tool-7zip; } }
+                                            // 7-Zip — hover + click
+                                            ta-7zip := TouchArea {
+                                                clicked => { pe-tool-7zip = !pe-tool-7zip; }
+                                                HorizontalBox {
+                                                    spacing: 6px;
+                                                    Rectangle { width: 16px; height: 16px; background: pe-tool-7zip ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
+                                                        Text { text: pe-tool-7zip ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                    }
+                                                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-7zip-present ? Theme.accent-green : Theme.accent-orange; }
+                                                    Text { text: "7-Zip"; color: Theme.text-primary; font-size: 11px; }
                                                 }
-                                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-7zip-present ? Theme.accent-green : Theme.accent-orange; }
-                                                Text { text: "7-Zip"; color: Theme.text-primary; font-size: 11px; }
                                             }
 
-                                            // Autoruns — Sysinternals auto-start manager
-                                            HorizontalBox {
-                                                spacing: 6px;
-                                                Rectangle { width: 16px; height: 16px; background: pe-tool-autoruns ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
-                                                    Text { text: pe-tool-autoruns ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
-                                                    TouchArea { clicked => { pe-tool-autoruns = !pe-tool-autoruns; } }
+                                            // Autoruns — Sysinternals auto-start manager, hover + click
+                                            ta-autoruns := TouchArea {
+                                                clicked => { pe-tool-autoruns = !pe-tool-autoruns; }
+                                                HorizontalBox {
+                                                    spacing: 6px;
+                                                    Rectangle { width: 16px; height: 16px; background: pe-tool-autoruns ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
+                                                        Text { text: pe-tool-autoruns ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                    }
+                                                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-autoruns-present ? Theme.accent-green : Theme.accent-orange; }
+                                                    Text { text: "Autoruns"; color: Theme.text-primary; font-size: 11px; }
                                                 }
-                                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-autoruns-present ? Theme.accent-green : Theme.accent-orange; }
-                                                Text { text: "Autoruns"; color: Theme.text-primary; font-size: 11px; }
                                             }
 
-                                            // Event Viewer (PE) — from pcassistsoftware
-                                            HorizontalBox {
-                                                spacing: 6px;
-                                                Rectangle { width: 16px; height: 16px; background: pe-tool-eventviewer ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
-                                                    Text { text: pe-tool-eventviewer ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
-                                                    TouchArea { clicked => { pe-tool-eventviewer = !pe-tool-eventviewer; } }
+                                            // Event Viewer (PE) — hover + click
+                                            ta-eventviewer := TouchArea {
+                                                clicked => { pe-tool-eventviewer = !pe-tool-eventviewer; }
+                                                HorizontalBox {
+                                                    spacing: 6px;
+                                                    Rectangle { width: 16px; height: 16px; background: pe-tool-eventviewer ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
+                                                        Text { text: pe-tool-eventviewer ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                    }
+                                                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-eventviewer-present ? Theme.accent-green : Theme.accent-orange; }
+                                                    Text { text: "Event Viewer"; color: Theme.text-primary; font-size: 11px; }
                                                 }
-                                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-eventviewer-present ? Theme.accent-green : Theme.accent-orange; }
-                                                Text { text: "Event Viewer"; color: Theme.text-primary; font-size: 11px; }
                                             }
 
-                                            // Installed Software (PE) — from pcassistsoftware
-                                            HorizontalBox {
-                                                spacing: 6px;
-                                                Rectangle { width: 16px; height: 16px; background: pe-tool-installedsw ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
-                                                    Text { text: pe-tool-installedsw ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
-                                                    TouchArea { clicked => { pe-tool-installedsw = !pe-tool-installedsw; } }
+                                            // Installed Software (PE) — hover + click
+                                            ta-installedsw := TouchArea {
+                                                clicked => { pe-tool-installedsw = !pe-tool-installedsw; }
+                                                HorizontalBox {
+                                                    spacing: 6px;
+                                                    Rectangle { width: 16px; height: 16px; background: pe-tool-installedsw ? Theme.accent-teal : Theme.button-bg; border-radius: 3px;
+                                                        Text { text: pe-tool-installedsw ? "✓" : ""; color: Theme.sidebar-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                    }
+                                                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-installedsw-present ? Theme.accent-green : Theme.accent-orange; }
+                                                    Text { text: "Installed SW"; color: Theme.text-primary; font-size: 11px; }
                                                 }
-                                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: pe-tool-installedsw-present ? Theme.accent-green : Theme.accent-orange; }
-                                                Text { text: "Installed SW"; color: Theme.text-primary; font-size: 11px; }
                                             }
                                         }
                                     }
@@ -3496,8 +3422,26 @@ export component MainWindow inherits Window {
                                             padding-right: 12px;
 
                                             Text {
-                                                text: pe-hover-description != "" ? pe-hover-description : "Hover over an option to see its description";
-                                                color: pe-hover-description != "" ? Theme.text-primary : Theme.text-muted;
+                                                // Show a description when the user hovers over any PE tool checkbox.
+                                                // Each ta-* is a named TouchArea wrapping one tool row above.
+                                                text: ta-winxshell.has-hover ? "Desktop shell with taskbar, start menu, and system tray" :
+                                                      ta-explorer.has-hover ? "Lightweight file manager with tabbed browsing" :
+                                                      ta-fileexplorer.has-hover ? "Dual-pane file explorer with search (.NET 4.8)" :
+                                                      ta-penetwork.has-hover ? "Network configuration - IP, DNS, WiFi, shares" :
+                                                      ta-webbrowser.has-hover ? "Compact portable web browser (.NET 4.8)" :
+                                                      ta-crystaldisk.has-hover ? "Disk health monitoring and SMART data" :
+                                                      ta-diskcheck.has-hover ? "Monitor hard drive SMART status (.NET 4.8)" :
+                                                      ta-dismtool.has-hover ? "GUI interface for DISM operations (.NET 4.8)" :
+                                                      ta-7zip.has-hover ? "File archiver with high compression ratio" :
+                                                      ta-autoruns.has-hover ? "View and manage auto-starting programs" :
+                                                      ta-eventviewer.has-hover ? "Examine Windows event logs (.NET 4.8)" :
+                                                      ta-installedsw.has-hover ? "List software installed on host systems (.NET 4.8)" :
+                                                      "Hover over a tool to see its description";
+                                                color: ta-winxshell.has-hover || ta-explorer.has-hover || ta-fileexplorer.has-hover ||
+                                                       ta-penetwork.has-hover || ta-webbrowser.has-hover || ta-crystaldisk.has-hover ||
+                                                       ta-diskcheck.has-hover || ta-dismtool.has-hover || ta-7zip.has-hover ||
+                                                       ta-autoruns.has-hover || ta-eventviewer.has-hover || ta-installedsw.has-hover
+                                                       ? Theme.text-primary : Theme.text-muted;
                                                 font-size: 11px;
                                                 vertical-alignment: center;
                                             }

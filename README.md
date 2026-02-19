@@ -41,12 +41,16 @@ MasterBooter combines four major functions into one tool: Backup/Restore, Window
 ## Quick Start
 
 1. Download `masterbooter.exe` from [Releases](https://github.com/Howweird/Masterbooter/releases)
-2. Run it — no installation needed (single portable EXE, ~9 MB)
-3. Choose your mode from the sidebar: Backup, Deploy, WinPE, or System Prep
+2. Copy it to a **USB flash drive** or removable drive
+3. Run it from the USB drive — no installation needed (single portable EXE, ~9 MB)
+4. Choose your mode from the sidebar: Backup, Deploy, WinPE, or System Prep
+
+> **Important**: MasterBooter should be run from a **USB/removable drive**, not from `C:\`. It stores settings, saved product keys, deployment profiles, and downloaded tools next to the EXE. Running from a USB drive means your configuration travels with you between machines — backup a key on one PC, deploy it on another.
 
 ## Requirements
 
 - **Windows 10 or 11** (x64)
+- **USB flash drive** or removable drive (recommended — settings and tools are stored next to the EXE)
 - **Windows ADK** — required only for WinPE Builder (not needed for other modes)
 - **Administrator privileges** — needed for WinPE building and deployment
 
@@ -102,6 +106,10 @@ MasterBooter was inspired by:
 
 - **[Windows Setup Helper](https://github.com/jmclaren7/windows-setup-helper)** by jmclaren7 — PE tool integration, SFX apps, and VNC workflows
 - **[GhostWin](https://github.com/CK-Technology/ghostwin)** by CK-Technology — WIM handling, driver injection, and ISO verification
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for version history and release notes.
 
 ## License
 

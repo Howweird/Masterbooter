@@ -162,7 +162,21 @@ pub fn check_for_updates() -> UpdateCheckResult {
         Err(e) => return make_error(format!("Could not reach GitHub: {}", e)),
     };
 
-    // Check for HTTP errors (404 = no releases yet, 403 = rate limited, etc.)
+    // Handle HTTP 404 specifically — this means no releases exist yet on the repo.
+    // This is normal (not an error) when the project hasn't published its first release.
+    if response.status().as_u16() == 404 {
+        return UpdateCheckResult {
+            update_available: false,
+            latest_version: current_version.clone(),
+            current_version,
+            release_notes: String::new(),
+            download_url: String::new(),
+            download_size: 0,
+            error: String::new(), // No error — just no releases published yet
+        };
+    }
+
+    // Check for other HTTP errors (403 = rate limited, 500 = server error, etc.)
     if !response.status().is_success() {
         return make_error(format!("GitHub API returned status {}", response.status()));
     }

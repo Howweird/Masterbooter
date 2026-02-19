@@ -2141,10 +2141,19 @@ pub fn pick_profile_file() -> Option<PathBuf> {
 /// * `Some(PathBuf)` — the selected script file path
 /// * `None` — user cancelled the dialog
 pub fn pick_script_file() -> Option<PathBuf> {
-    let dialog = rfd::FileDialog::new()
+    // Open the file picker starting in the FirstLogon/ folder next to the EXE.
+    // This is where scripts are stored, so it's the most helpful default location.
+    let scripts_dir = get_scripts_dir("FirstLogon");
+
+    let mut dialog = rfd::FileDialog::new()
         .set_title("Select Script")
         .add_filter("Scripts", &["ps1", "bat", "cmd", "exe", "reg", "vbs"])
         .add_filter("All Files", &["*"]);
+
+    // Set the starting directory to the scripts folder
+    if scripts_dir.exists() {
+        dialog = dialog.set_directory(&scripts_dir);
+    }
 
     dialog.pick_file()
 }
@@ -2707,17 +2716,19 @@ try {
 } catch { Write-Output "INSTALLED_KEY:" }
 
 # 3. Edition and license status
+# Uses server-side WQL filter (fast!) instead of client-side Where-Object (slow!).
+# The old approach downloaded all ~400 SoftwareLicensingProduct rows then filtered
+# in PowerShell, taking 30+ seconds. WQL filtering happens inside WMI, returning
+# only matching rows — typically completes in under 5 seconds.
 try {
-    $product = Get-CimInstance -ClassName SoftwareLicensingProduct |
-        Where-Object { $_.PartialProductKey -and $_.LicenseStatus -eq 1 } |
+    $product = Get-CimInstance -ClassName SoftwareLicensingProduct -Filter "PartialProductKey IS NOT NULL AND LicenseStatus = 1" |
         Select-Object -First 1
     if ($product) {
         Write-Output "EDITION:$($product.Name)"
         Write-Output "STATUS:Licensed"
     } else {
         # Fallback: check for any active product even if not fully licensed
-        $any = Get-CimInstance -ClassName SoftwareLicensingProduct |
-            Where-Object { $_.PartialProductKey } |
+        $any = Get-CimInstance -ClassName SoftwareLicensingProduct -Filter "PartialProductKey IS NOT NULL" |
             Select-Object -First 1
         if ($any) {
             $statusText = switch ($any.LicenseStatus) {
@@ -2733,12 +2744,23 @@ try {
             Write-Output "EDITION:$($any.Name)"
             Write-Output "STATUS:$statusText"
         } else {
-            Write-Output "EDITION:"
+            # WMI returned nothing — fall back to registry for edition name
+            $regEdition = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue).ProductName
+            if ($regEdition) {
+                Write-Output "EDITION:$regEdition"
+            } else {
+                Write-Output "EDITION:"
+            }
             Write-Output "STATUS:Not found"
         }
     }
 } catch {
-    Write-Output "EDITION:"
+    # WMI failed entirely — try registry fallback for edition
+    try {
+        $regEdition = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue).ProductName
+        if ($regEdition) { Write-Output "EDITION:$regEdition" }
+        else { Write-Output "EDITION:" }
+    } catch { Write-Output "EDITION:" }
     Write-Output "STATUS:Error detecting"
 }
 
@@ -2807,9 +2829,23 @@ Write-Output "HOSTNAME:$env:COMPUTERNAME"
     Ok(info)
 }
 
-/// Save detected Windows key info to saved_keys.json next to the EXE.
+/// Get the path to saved_keys.json (next to the EXE).
 /// This file persists on the USB drive so keys survive reboots between
 /// live Windows (backup) and WinPE (deploy) sessions.
+fn get_saved_keys_path() -> PathBuf {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
+    exe_dir.join("saved_keys.json")
+}
+
+/// Save detected Windows key info to saved_keys.json next to the EXE.
+/// Supports multiple keys: loads existing entries, adds/updates by hostname,
+/// then writes the full array back to the file.
+///
+/// **Backward compatibility**: If the file contains the old single-object format
+/// (from before multi-key support), it's automatically migrated to an array.
 ///
 /// # Arguments
 /// * `info` — Key information to save
@@ -2818,44 +2854,122 @@ Write-Output "HOSTNAME:$env:COMPUTERNAME"
 /// * `Ok(())` — saved successfully
 /// * `Err(String)` — error message
 pub fn save_keys_to_file(info: &WindowsKeyInfo) -> Result<(), String> {
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."));
+    let path = get_saved_keys_path();
 
-    let path = exe_dir.join("saved_keys.json");
+    // Load existing keys (may be empty on first use)
+    let mut keys = load_saved_keys();
 
-    let json = serde_json::to_string_pretty(info)
+    // Check if this hostname already exists — update it instead of duplicating
+    let existing_index = keys.iter().position(|k| k.hostname == info.hostname);
+    if let Some(idx) = existing_index {
+        // Replace the existing entry for this machine
+        keys[idx] = info.clone();
+        println!("[Deploy] Updated existing key for hostname: {}", info.hostname);
+    } else {
+        // New machine — add to the list
+        keys.push(info.clone());
+        println!("[Deploy] Added new key for hostname: {}", info.hostname);
+    }
+
+    // Write the full array back to the file
+    let json = serde_json::to_string_pretty(&keys)
         .map_err(|e| format!("Failed to serialize key info: {}", e))?;
 
     fs::write(&path, &json)
         .map_err(|e| format!("Failed to write saved_keys.json: {}", e))?;
 
-    println!("[Deploy] Saved keys to: {}", path.display());
+    println!("[Deploy] Saved {} key(s) to: {}", keys.len(), path.display());
     Ok(())
 }
 
-/// Load previously saved Windows key info from saved_keys.json.
-/// Returns None if the file doesn't exist (no previous backup).
+/// Load all previously saved Windows key entries from saved_keys.json.
+/// Returns an empty Vec if the file doesn't exist (no previous backups).
+///
+/// **Backward compatibility**: If the file contains the old single-object format
+/// (one WindowsKeyInfo instead of an array), it's automatically parsed and
+/// returned as a single-element Vec. The file is NOT rewritten here — it will
+/// be migrated to the array format on the next save.
 ///
 /// # Returns
-/// * `Some(WindowsKeyInfo)` — loaded key info
-/// * `None` — no saved keys file found
-pub fn load_saved_keys() -> Option<WindowsKeyInfo> {
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    let path = exe_dir.join("saved_keys.json");
+/// * `Vec<WindowsKeyInfo>` — all saved key entries (may be empty)
+pub fn load_saved_keys() -> Vec<WindowsKeyInfo> {
+    let path = get_saved_keys_path();
 
     if !path.exists() {
-        return None;
+        return Vec::new();
     }
 
-    let content = fs::read_to_string(&path).ok()?;
-    let info: WindowsKeyInfo = serde_json::from_str(&content).ok()?;
+    let content = match fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
 
-    println!("[Deploy] Loaded saved keys from: {}", path.display());
-    Some(info)
+    // First try: parse as an array of keys (new multi-key format)
+    if let Ok(keys) = serde_json::from_str::<Vec<WindowsKeyInfo>>(&content) {
+        println!("[Deploy] Loaded {} saved key(s) from: {}", keys.len(), path.display());
+        return keys;
+    }
+
+    // Second try: parse as a single key (old format — auto-migrate)
+    if let Ok(single_key) = serde_json::from_str::<WindowsKeyInfo>(&content) {
+        println!("[Deploy] Migrated old single-key format from: {}", path.display());
+        return vec![single_key];
+    }
+
+    // File is corrupt or unrecognized — return empty
+    eprintln!("[Deploy] Warning: Could not parse saved_keys.json");
+    Vec::new()
+}
+
+/// Delete a saved key entry by hostname.
+/// Loads all keys, removes the one matching the hostname, and saves the rest back.
+///
+/// # Arguments
+/// * `hostname` — The hostname of the machine whose key should be deleted
+///
+/// # Returns
+/// * `Ok(true)` — key was found and deleted
+/// * `Ok(false)` — no key found with that hostname
+/// * `Err(String)` — file I/O error
+pub fn delete_saved_key(hostname: &str) -> Result<bool, String> {
+    let path = get_saved_keys_path();
+    let mut keys = load_saved_keys();
+
+    let original_len = keys.len();
+    keys.retain(|k| k.hostname != hostname);
+
+    if keys.len() == original_len {
+        // Nothing was removed — hostname not found
+        return Ok(false);
+    }
+
+    // Write the remaining keys back to the file
+    let json = serde_json::to_string_pretty(&keys)
+        .map_err(|e| format!("Failed to serialize key info: {}", e))?;
+
+    fs::write(&path, &json)
+        .map_err(|e| format!("Failed to write saved_keys.json: {}", e))?;
+
+    println!("[Deploy] Deleted key for '{}'. {} key(s) remaining.", hostname, keys.len());
+    Ok(true)
+}
+
+/// Format saved key entries as human-readable labels for a ComboBox dropdown.
+/// Each label shows: "HOSTNAME (YYYY-MM-DD)" — e.g., "OFFICE-PC (2026-02-18)"
+///
+/// # Arguments
+/// * `keys` — The list of saved key entries
+///
+/// # Returns
+/// * `Vec<String>` — labels suitable for display in a ComboBox
+pub fn format_saved_key_labels(keys: &[WindowsKeyInfo]) -> Vec<String> {
+    keys.iter()
+        .map(|k| {
+            if k.date.is_empty() {
+                k.hostname.clone()
+            } else {
+                format!("{} ({})", k.hostname, k.date)
+            }
+        })
+        .collect()
 }
