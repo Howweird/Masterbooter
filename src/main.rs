@@ -1141,9 +1141,6 @@ fn main() -> Result<(), slint::PlatformError> {
                 let fix_dpi_scaling = ui.get_pe_fix_dpi_scaling();
                 let fix_wallpaper_host = ui.get_pe_fix_wallpaper_host();
                 let fix_font_fix = ui.get_pe_fix_font_fix();
-                let fix_profile_folders = ui.get_pe_fix_profile_folders();
-                let fix_temp_folders = ui.get_pe_fix_temp_folders();
-                let fix_file_associations = ui.get_pe_fix_file_associations();
                 let fix_crash_dialogs = ui.get_pe_fix_crash_dialogs();
                 let fix_long_paths = ui.get_pe_fix_long_paths();
 
@@ -1295,9 +1292,6 @@ fn main() -> Result<(), slint::PlatformError> {
                 if fix_dpi_scaling { enabled_fixes.push("dpi_scaling".to_string()); }
                 if fix_wallpaper_host { enabled_fixes.push("wallpaper_host".to_string()); }
                 if fix_font_fix { enabled_fixes.push("font_fix".to_string()); }
-                if fix_profile_folders { enabled_fixes.push("profile_folders".to_string()); }
-                if fix_temp_folders { enabled_fixes.push("temp_folders".to_string()); }
-                if fix_file_associations { enabled_fixes.push("file_associations".to_string()); }
                 if fix_crash_dialogs { enabled_fixes.push("disable_crash_dialogs".to_string()); }
                 if fix_long_paths { enabled_fixes.push("enable_long_paths".to_string()); }
 
@@ -1345,6 +1339,41 @@ fn main() -> Result<(), slint::PlatformError> {
 
                 // Run build in a separate thread
                 std::thread::spawn(move || {
+                    // Disable Quick Edit mode on the console window.
+                    // When Quick Edit is enabled (Windows default), clicking anywhere in
+                    // the console window selects text and PAUSES the entire process.
+                    // The user has to press Enter to resume — this causes the build to
+                    // appear "stuck" at whatever progress % was showing when they clicked.
+                    // We disable it here so accidental clicks don't freeze the build.
+                    #[cfg(target_os = "windows")]
+                    {
+                        // Windows API constants for console mode
+                        const ENABLE_QUICK_EDIT_MODE: u32 = 0x0040;
+                        const ENABLE_EXTENDED_FLAGS: u32 = 0x0080;
+                        const STD_INPUT_HANDLE: u32 = 0xFFFFFFF6; // (DWORD)-10
+
+                        extern "system" {
+                            fn GetStdHandle(nStdHandle: u32) -> *mut std::ffi::c_void;
+                            fn GetConsoleMode(hConsoleHandle: *mut std::ffi::c_void, lpMode: *mut u32) -> i32;
+                            fn SetConsoleMode(hConsoleHandle: *mut std::ffi::c_void, dwMode: u32) -> i32;
+                        }
+
+                        unsafe {
+                            // Get the console input handle directly from Windows
+                            let handle = GetStdHandle(STD_INPUT_HANDLE);
+                            if !handle.is_null() {
+                                let mut mode: u32 = 0;
+                                if GetConsoleMode(handle, &mut mode) != 0 {
+                                    // Remove Quick Edit, add Extended Flags (required for the change to take effect)
+                                    mode &= !ENABLE_QUICK_EDIT_MODE;
+                                    mode |= ENABLE_EXTENDED_FLAGS;
+                                    let _ = SetConsoleMode(handle, mode);
+                                    println!("Console Quick Edit mode disabled (prevents accidental build pauses)");
+                                }
+                            }
+                        }
+                    }
+
                     let result = winpe::build_pe_iso(&config, move |progress, status| {
                         // Update progress in UI
                         let ui_progress = ui_for_progress.clone();

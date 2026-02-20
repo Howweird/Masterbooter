@@ -753,11 +753,6 @@ export component MainWindow inherits Window {
     in-out property <bool> pe-fix-wallpaper-host: true;   // Remove WallpaperHost.exe
     in-out property <bool> pe-fix-font-fix: true;         // Segoe UI italic fix
 
-    // System fixes
-    in-out property <bool> pe-fix-profile-folders: true;  // Create user profile folders
-    in-out property <bool> pe-fix-temp-folders: true;     // Configure TEMP folders
-    in-out property <bool> pe-fix-file-associations: true; // Register file associations
-
     // Compatibility fixes
     in-out property <bool> pe-fix-crash-dialogs: true;    // Disable crash dialogs
     in-out property <bool> pe-fix-long-paths: true;       // Enable long path support
@@ -1128,16 +1123,17 @@ export component MainWindow inherits Window {
                 horizontal-stretch: 1;
                 background: Theme.background-dark;
 
-                ScrollView {
-                    VerticalBox {
-                        padding: 20px;
-                        spacing: 10px;
+                // Each page gets its own ScrollView for proper scrolling in WinPE.
+                // (A single global ScrollView doesn't recalculate viewport on conditional content changes.)
+                VerticalBox {
+                    spacing: 0;
 
-                        // ============================
-                        // BACKUP/RESTORE VIEW
-                        // ============================
-                        if current-mode == 0: VerticalBox {
-                            spacing: 20px;
+                    // ============================
+                    // BACKUP/RESTORE VIEW
+                    // ============================
+                    if current-mode == 0: ScrollView { VerticalBox {
+                        padding: 20px;
+                        spacing: 20px;
 
                             // Header
                             Text {
@@ -1359,12 +1355,13 @@ export component MainWindow inherits Window {
                                     }
                                 }
                             }
-                        }
+                        } } // close Backup ScrollView + VerticalBox
 
                         // ============================
                         // WINDOWS DEPLOY VIEW
                         // ============================
-                        if current-mode == 1: VerticalBox {
+                        if current-mode == 1: ScrollView { VerticalBox {
+                            padding: 20px;
                             spacing: 20px;
 
                             // Page header
@@ -2090,12 +2087,13 @@ export component MainWindow inherits Window {
                                 }
                             }
                             } // close: if deploy-install-mode == 2 VerticalBox
-                        }
+                        } } // close Deploy ScrollView + VerticalBox
 
                         // ============================
                         // WINPE BUILDER VIEW
                         // ============================
-                        if current-mode == 2: VerticalBox {
+                        if current-mode == 2: ScrollView { VerticalBox {
+                            padding: 20px;
                             spacing: 20px;
 
                             // Header
@@ -2197,6 +2195,12 @@ export component MainWindow inherits Window {
                                             text: adk-found ? "Advanced WinPE customization available" : "Enables advanced package installation";
                                             color: Theme.text-muted;
                                             font-size: 11px;
+                                        }
+                                        // Clarify the confusing "Windows 10" naming in the ADK installer
+                                        if !adk-found: Text {
+                                            text: "Note: The ADK installer says 'Windows 10' but supports Windows 11.";
+                                            color: Theme.text-muted;
+                                            font-size: 10px;
                                         }
                                     }
 
@@ -3323,49 +3327,6 @@ export component MainWindow inherits Window {
                                                         Text { text: "Font Fix"; color: Theme.text-primary; font-size: 10px; }
                                                     }
                                                 }
-
-                                                VerticalBox {
-                                                    spacing: 6px;
-                                                    horizontal-stretch: 1;
-
-                                                    Text { text: "System"; color: Theme.text-secondary; font-size: 10px; }
-
-                                                    HorizontalBox {
-                                                        spacing: 4px;
-                                                        Rectangle {
-                                                            width: 14px; height: 14px;
-                                                            background: pe-fix-profile-folders ? Theme.accent-teal : Theme.button-bg;
-                                                            border-radius: 3px;
-                                                            Text { text: pe-fix-profile-folders ? "✓" : ""; color: Theme.sidebar-bg; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; }
-                                                            TouchArea { enabled: pe-apply-fixes; clicked => { pe-fix-profile-folders = !pe-fix-profile-folders; } }
-                                                        }
-                                                        Text { text: "Profile Folders"; color: Theme.text-primary; font-size: 10px; }
-                                                    }
-
-                                                    HorizontalBox {
-                                                        spacing: 4px;
-                                                        Rectangle {
-                                                            width: 14px; height: 14px;
-                                                            background: pe-fix-temp-folders ? Theme.accent-teal : Theme.button-bg;
-                                                            border-radius: 3px;
-                                                            Text { text: pe-fix-temp-folders ? "✓" : ""; color: Theme.sidebar-bg; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; }
-                                                            TouchArea { enabled: pe-apply-fixes; clicked => { pe-fix-temp-folders = !pe-fix-temp-folders; } }
-                                                        }
-                                                        Text { text: "TEMP Config"; color: Theme.text-primary; font-size: 10px; }
-                                                    }
-
-                                                    HorizontalBox {
-                                                        spacing: 4px;
-                                                        Rectangle {
-                                                            width: 14px; height: 14px;
-                                                            background: pe-fix-file-associations ? Theme.accent-teal : Theme.button-bg;
-                                                            border-radius: 3px;
-                                                            Text { text: pe-fix-file-associations ? "✓" : ""; color: Theme.sidebar-bg; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; }
-                                                            TouchArea { enabled: pe-apply-fixes; clicked => { pe-fix-file-associations = !pe-fix-file-associations; } }
-                                                        }
-                                                        Text { text: "File Assoc."; color: Theme.text-primary; font-size: 10px; }
-                                                    }
-                                                }
                                             }
 
                                             // Compatibility fixes
@@ -3591,12 +3552,13 @@ export component MainWindow inherits Window {
                                     }
                                 }
                             }
-                        }
+                        } } // close WinPE ScrollView + VerticalBox
 
                         // ============================
                         // SYSTEM PREP VIEW
                         // ============================
-                        if current-mode == 3: VerticalBox {
+                        if current-mode == 3: ScrollView { VerticalBox {
+                            padding: 20px;
                             spacing: 20px;
 
                             // Page title
@@ -3660,8 +3622,7 @@ export component MainWindow inherits Window {
                                     }
                                 }
                             }
-                        }
-                    }
+                        } } // close System Prep ScrollView + VerticalBox
                 }
             }
         }

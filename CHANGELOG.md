@@ -7,6 +7,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.1.2] - 2026-02-19
+
+### Fixed
+- **WiFi "cannot verify digital signature" error**: WinPE enforces driver signature verification by default, which rejected manually-copied WiFi protocol drivers (nwifi.sys, vwififlt.sys, wfplwfs.sys) at boot time. Now disables driver signature enforcement in both BIOS and UEFI BCD stores during PE build, matching PhoenixPE's BypassDriverSigning approach. Uses three bcdedit methods (loadoptions, nointegritychecks, testsigning) for maximum compatibility across Windows 10/11 PE versions.
+- **WiFi WPA2 handshake fails**: Added `rsaenh.dll` (RSA Enhanced Cryptographic Provider) to the WiFi DLL injection list. Without it, WPA-PSK/WPA2-PSK key derivation fails silently — services start but can't actually connect.
+- **WiFi network status not detected**: Added full service registry copies for `netprofm` (Network List Manager) and `NlaSvc` (Network Location Awareness). Previously only had AllowStart entries (empty keys) without actual service definitions — so WinPE didn't know what these services were.
+- **netprofm won't start in WinPE**: Added PhoenixPE's SystemSetupInProgress trick to the launcher script. WinPE's `SystemSetupInProgress=1` flag blocks netprofm from starting. The launcher now temporarily sets it to 0, starts netprofm + NlaSvc, then restores it.
+- **WMI WiFi queries fail**: Added `wlan.mof` (WMI WiFi class definitions) copy from install.wim to PE. Some tools use WMI to query WiFi adapter state.
+- **Build freezes at 48%**: Windows console Quick Edit mode caused the build process to pause when the user clicked the console window. Now disables Quick Edit at build thread start so accidental clicks don't freeze the build.
+
+### Removed
+- **4 redundant/broken PE fixes**: Profile Folders, TEMP Config, and File Associations were either redundant (already handled by the launcher script at boot time) or broken (file associations .reg was never imported). Set Resolution was also broken (script was never executed). The 5 remaining fixes (DPI scaling, WallpaperHost removal, font fix, crash dialogs, long paths) are genuine offline registry modifications that can only be done at build time.
+
+---
+
 ## [0.1.1] - 2026-02-18
 
 ### Fixed

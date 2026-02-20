@@ -3,15 +3,17 @@
 // ============================================
 // This module handles special fixes and workarounds for WinPE builds.
 //
-// WinPE has various quirks and issues that need to be addressed:
-// - DPI scaling issues cause blurry/small text on high-DPI displays
-// - WallpaperHost.exe can cause display problems with software rendering
-// - User profile folders may be missing, causing app errors
-// - Font rendering issues in some configurations
+// WinPE has various quirks that need offline registry modifications at build
+// time (before the image boots). These fixes modify registry hives inside the
+// mounted WIM so the settings are active when WinPE starts.
 //
-// These fixes are based on research from:
+// Fixes that create folders or set environment variables at runtime are NOT
+// here — those are handled by the launcher script (launch.cmd) which runs
+// at boot time after wpeinit.
+//
+// Based on research from:
 // - AMPIPIT (removes WallpaperHost.exe)
-// - Windows Setup Helper (DPI fix, font fix, profile folders)
+// - Windows Setup Helper (DPI fix, font fix)
 // - GhostWin (DPI fix via registry)
 // ============================================
 
@@ -22,7 +24,8 @@ use std::fs;
 // ============================================
 // PE FIX DEFINITIONS
 // ============================================
-// Each fix can be toggled on/off in the UI
+// Each fix can be toggled on/off in the UI.
+// All fixes modify offline registry hives — they can't be done at boot time.
 
 /// Represents a single PE fix/workaround
 #[derive(Debug, Clone)]
@@ -52,8 +55,6 @@ pub struct PeFix {
 pub enum FixCategory {
     /// Display and UI related fixes
     Display,
-    /// System configuration
-    System,
     /// Compatibility fixes
     Compatibility,
 }
@@ -63,13 +64,16 @@ impl FixCategory {
     pub fn display_name(&self) -> &'static str {
         match self {
             FixCategory::Display => "Display & UI",
-            FixCategory::System => "System",
             FixCategory::Compatibility => "Compatibility",
         }
     }
 }
 
 /// Get all available PE fixes
+///
+/// These are offline registry modifications applied to the mounted WIM at
+/// build time. Runtime tasks (profile folders, TEMP vars, env setup) are
+/// handled by the launcher script instead.
 pub fn get_all_fixes() -> Vec<PeFix> {
     vec![
         // ============================================
@@ -99,46 +103,6 @@ pub fn get_all_fixes() -> Vec<PeFix> {
             display_name: "Font Rendering Fix",
             description: "Fix Segoe UI italic rendering issue that causes garbled text",
             category: FixCategory::Display,
-            default_enabled: true,
-            requires_adk: false,
-        },
-
-        PeFix {
-            id: "set_resolution",
-            display_name: "Set Display Resolution",
-            description: "Configure a specific display resolution for the PE environment",
-            category: FixCategory::Display,
-            default_enabled: false,  // Requires user to specify resolution
-            requires_adk: false,
-        },
-
-        // ============================================
-        // SYSTEM CONFIGURATION
-        // ============================================
-
-        PeFix {
-            id: "profile_folders",
-            display_name: "Create Profile Folders",
-            description: "Create standard user profile folders (Desktop, Documents, Downloads)",
-            category: FixCategory::System,
-            default_enabled: true,
-            requires_adk: false,
-        },
-
-        PeFix {
-            id: "temp_folders",
-            display_name: "Configure TEMP Folders",
-            description: "Ensure TEMP and TMP environment variables point to valid locations",
-            category: FixCategory::System,
-            default_enabled: true,
-            requires_adk: false,
-        },
-
-        PeFix {
-            id: "file_associations",
-            display_name: "File Associations",
-            description: "Register common file associations (txt, log, zip, etc.)",
-            category: FixCategory::System,
             default_enabled: true,
             requires_adk: false,
         },
@@ -190,16 +154,19 @@ pub struct FixResult {
     pub message: String,
 }
 
+/// Options for fixes that need additional configuration
+#[derive(Debug, Clone, Default)]
+pub struct FixOptions {
+    // Currently empty — all remaining fixes are self-contained.
+    // Kept for API compatibility with PeBuildConfig.
+}
+
 /// Apply a single fix to a mounted WIM
-pub fn apply_fix(mount_path: &Path, fix_id: &str, options: &FixOptions) -> FixResult {
+pub fn apply_fix(mount_path: &Path, fix_id: &str, _options: &FixOptions) -> FixResult {
     match fix_id {
         "dpi_scaling" => apply_dpi_scaling_fix(mount_path),
         "wallpaper_host" => apply_wallpaper_host_fix(mount_path),
         "font_fix" => apply_font_fix(mount_path),
-        "set_resolution" => apply_resolution_fix(mount_path, options),
-        "profile_folders" => apply_profile_folders_fix(mount_path),
-        "temp_folders" => apply_temp_folders_fix(mount_path),
-        "file_associations" => apply_file_associations_fix(mount_path),
         "disable_crash_dialogs" => apply_crash_dialogs_fix(mount_path),
         "enable_long_paths" => apply_long_paths_fix(mount_path),
         _ => FixResult {
@@ -209,13 +176,6 @@ pub fn apply_fix(mount_path: &Path, fix_id: &str, options: &FixOptions) -> FixRe
             message: format!("Unknown fix: {}", fix_id),
         },
     }
-}
-
-/// Options for fixes that need additional configuration
-#[derive(Debug, Clone, Default)]
-pub struct FixOptions {
-    /// Resolution for set_resolution fix (e.g., "1920x1080")
-    pub resolution: Option<String>,
 }
 
 /// Apply all enabled fixes to a mounted WIM
@@ -572,250 +532,6 @@ fn apply_font_fix(mount_path: &Path) -> FixResult {
     }
 }
 
-/// Set display resolution via BCD
-fn apply_resolution_fix(mount_path: &Path, options: &FixOptions) -> FixResult {
-    println!("Applying resolution fix...");
-
-    let resolution = match &options.resolution {
-        Some(res) => res.clone(),
-        None => {
-            return FixResult {
-                fix_id: "set_resolution".to_string(),
-                fix_name: "Set Display Resolution".to_string(),
-                success: false,
-                message: "No resolution specified".to_string(),
-            };
-        }
-    };
-
-    // Parse resolution (e.g., "1920x1080")
-    let parts: Vec<&str> = resolution.split('x').collect();
-    if parts.len() != 2 {
-        return FixResult {
-            fix_id: "set_resolution".to_string(),
-            fix_name: "Set Display Resolution".to_string(),
-            success: false,
-            message: "Invalid resolution format (use WxH, e.g., 1920x1080)".to_string(),
-        };
-    }
-
-    // Note: Resolution is typically set via bcdedit on the final ISO's BCD
-    // For now, we'll create a startup script that attempts to set it
-
-    let startup_script = format!(
-        r#"@echo off
-REM Set display resolution to {}
-wpeutil SetDisplayResolution {} {}
-"#,
-        resolution, parts[0], parts[1]
-    );
-
-    let script_path = mount_path
-        .join("Windows")
-        .join("Setup")
-        .join("Scripts")
-        .join("SetResolution.cmd");
-
-    if let Some(parent) = script_path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-
-    match fs::write(&script_path, startup_script) {
-        Ok(_) => {
-            println!("  Resolution script created for {}", resolution);
-            FixResult {
-                fix_id: "set_resolution".to_string(),
-                fix_name: "Set Display Resolution".to_string(),
-                success: true,
-                message: format!("Resolution {} configured", resolution),
-            }
-        }
-        Err(e) => FixResult {
-            fix_id: "set_resolution".to_string(),
-            fix_name: "Set Display Resolution".to_string(),
-            success: false,
-            message: format!("Failed to create script: {}", e),
-        },
-    }
-}
-
-/// Create standard user profile folders
-///
-/// From Windows Setup Helper: Many applications expect these folders to exist.
-/// Creating them prevents "path not found" errors.
-fn apply_profile_folders_fix(mount_path: &Path) -> FixResult {
-    println!("Applying profile folders fix...");
-
-    // Create folders in the Default user profile
-    let user_profile = mount_path.join("Users").join("Default");
-
-    let folders = [
-        "Desktop",
-        "Documents",
-        "Downloads",
-        "Pictures",
-        "Music",
-        "Videos",
-        "AppData\\Local",
-        "AppData\\Local\\Temp",
-        "AppData\\Roaming",
-    ];
-
-    let mut created = 0;
-
-    for folder in &folders {
-        let path = user_profile.join(folder);
-        match fs::create_dir_all(&path) {
-            Ok(_) => {
-                created += 1;
-            }
-            Err(e) => {
-                println!("  Warning: Could not create {}: {}", folder, e);
-            }
-        }
-    }
-
-    // Also create a batch file that ensures folders exist at runtime
-    let startup_script = r#"@echo off
-REM Create user profile folders if they don't exist
-if not exist "%USERPROFILE%\Desktop" mkdir "%USERPROFILE%\Desktop"
-if not exist "%USERPROFILE%\Documents" mkdir "%USERPROFILE%\Documents"
-if not exist "%USERPROFILE%\Downloads" mkdir "%USERPROFILE%\Downloads"
-"#;
-
-    let scripts_dir = mount_path.join("ProgramData").join("MasterBooter");
-    let _ = fs::create_dir_all(&scripts_dir);
-    let _ = fs::write(scripts_dir.join("CreateProfileFolders.cmd"), startup_script);
-
-    println!("  Created {} profile folders", created);
-    FixResult {
-        fix_id: "profile_folders".to_string(),
-        fix_name: "Create Profile Folders".to_string(),
-        success: true,
-        message: format!("{} folders created", created),
-    }
-}
-
-/// Configure TEMP folder environment
-fn apply_temp_folders_fix(mount_path: &Path) -> FixResult {
-    println!("Applying TEMP folders fix...");
-
-    // Ensure temp folders exist
-    let temp_paths = [
-        mount_path.join("Windows").join("Temp"),
-        mount_path.join("Users").join("Default").join("AppData").join("Local").join("Temp"),
-    ];
-
-    for path in &temp_paths {
-        let _ = fs::create_dir_all(path);
-    }
-
-    // Create a startup script to set environment variables
-    let startup_script = r#"@echo off
-REM Ensure TEMP and TMP are set correctly
-if not exist "%TEMP%" mkdir "%TEMP%"
-if not exist "%TMP%" mkdir "%TMP%"
-set TEMP=X:\Windows\Temp
-set TMP=X:\Windows\Temp
-"#;
-
-    let scripts_dir = mount_path.join("ProgramData").join("MasterBooter");
-    let _ = fs::create_dir_all(&scripts_dir);
-
-    match fs::write(scripts_dir.join("ConfigureTemp.cmd"), startup_script) {
-        Ok(_) => {
-            println!("  TEMP folders configured");
-            FixResult {
-                fix_id: "temp_folders".to_string(),
-                fix_name: "Configure TEMP Folders".to_string(),
-                success: true,
-                message: "TEMP folders created and script added".to_string(),
-            }
-        }
-        Err(e) => FixResult {
-            fix_id: "temp_folders".to_string(),
-            fix_name: "Configure TEMP Folders".to_string(),
-            success: false,
-            message: format!("Failed to create script: {}", e),
-        },
-    }
-}
-
-/// Configure file associations
-///
-/// From Windows Setup Helper: Registers common file associations
-/// so double-clicking files works in the PE environment.
-fn apply_file_associations_fix(mount_path: &Path) -> FixResult {
-    println!("Applying file associations fix...");
-
-    // Create a registry file with common associations
-    let reg_content = r#"Windows Registry Editor Version 5.00
-
-; Common file associations for WinPE
-; Text files -> Notepad
-[HKEY_CLASSES_ROOT\.txt]
-@="txtfile"
-
-[HKEY_CLASSES_ROOT\txtfile\shell\open\command]
-@="notepad.exe \"%1\""
-
-[HKEY_CLASSES_ROOT\.log]
-@="txtfile"
-
-[HKEY_CLASSES_ROOT\.ini]
-@="txtfile"
-
-[HKEY_CLASSES_ROOT\.xml]
-@="txtfile"
-
-[HKEY_CLASSES_ROOT\.reg]
-@="regfile"
-
-[HKEY_CLASSES_ROOT\regfile\shell\open\command]
-@="regedit.exe \"%1\""
-
-; Command files
-[HKEY_CLASSES_ROOT\.cmd]
-@="cmdfile"
-
-[HKEY_CLASSES_ROOT\cmdfile\shell\open\command]
-@="cmd.exe /c \"%1\""
-
-[HKEY_CLASSES_ROOT\.bat]
-@="batfile"
-
-[HKEY_CLASSES_ROOT\batfile\shell\open\command]
-@="cmd.exe /c \"%1\""
-"#;
-
-    let reg_path = mount_path
-        .join("Windows")
-        .join("Setup")
-        .join("FileAssociations.reg");
-
-    if let Some(parent) = reg_path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-
-    match fs::write(&reg_path, reg_content) {
-        Ok(_) => {
-            println!("  File associations registry file created");
-            FixResult {
-                fix_id: "file_associations".to_string(),
-                fix_name: "File Associations".to_string(),
-                success: true,
-                message: "Associations for txt, log, cmd, bat, reg configured".to_string(),
-            }
-        }
-        Err(e) => FixResult {
-            fix_id: "file_associations".to_string(),
-            fix_name: "File Associations".to_string(),
-            success: false,
-            message: format!("Failed to write reg file: {}", e),
-        },
-    }
-}
-
 /// Disable Windows Error Reporting crash dialogs
 fn apply_crash_dialogs_fix(mount_path: &Path) -> FixResult {
     println!("Applying crash dialogs fix...");
@@ -962,7 +678,8 @@ mod tests {
     #[test]
     fn test_get_all_fixes() {
         let fixes = get_all_fixes();
-        assert!(!fixes.is_empty());
+        // 5 fixes: dpi_scaling, wallpaper_host, font_fix, crash_dialogs, long_paths
+        assert_eq!(fixes.len(), 5);
 
         // Check required fixes exist
         let dpi = fixes.iter().find(|f| f.id == "dpi_scaling");
@@ -974,9 +691,10 @@ mod tests {
     fn test_default_fixes() {
         let defaults = get_default_enabled_fixes();
 
-        // Core fixes should be enabled
+        // All 5 fixes should be enabled by default
+        assert_eq!(defaults.len(), 5);
         assert!(defaults.contains(&"dpi_scaling".to_string()));
         assert!(defaults.contains(&"wallpaper_host".to_string()));
-        assert!(defaults.contains(&"profile_folders".to_string()));
+        assert!(defaults.contains(&"disable_crash_dialogs".to_string()));
     }
 }

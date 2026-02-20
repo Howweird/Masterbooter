@@ -450,17 +450,18 @@ The WinPE Builder uses Windows ADK (Assessment and Deployment Kit) to create boo
  2. Run copype.cmd (creates WinPE base structure)
  3. Mount boot.wim with DISM
  4. Install ADK packages (WMI, PowerShell, NetFX, etc.)
- 5. Apply PE fixes (DPI, WallpaperHost, fonts, crash dialogs, long paths)
- 6. Extract WiFi files from ISO's install.wim (drivers, DLLs, schemas)
+ 5. Apply PE fixes (DPI, WallpaperHost, fonts, crash dialogs, long paths) — 5 offline registry fixes
+ 6. Extract WiFi files from ISO's install.wim (drivers, DLLs, schemas, wlan.mof)
  7. Inject WiFi drivers via DISM + copy for drvload fallback
- 8. Inject WLAN service infrastructure (DLLs, registry, L2Schemas)
+ 8. Inject WLAN service infrastructure (DLLs incl. rsaenh.dll, registry incl. netprofm/NlaSvc, L2Schemas)
  9. Inject branding wallpaper (embedded in EXE)
 10. Inject PE tools to X:\Tools\
 11. Create launcher script + winpeshl.ini + desktop shortcuts
 12. Unmount and commit WIM changes
 13. Export single WIM image (index 1 only)
-14. Run MakeWinPEMedia to create bootable ISO
-15. Verify ISO (5-point check: size, ISO9660, El Torito, boot files)
+14. Disable driver signature enforcement in BIOS + UEFI BCD stores
+15. Run MakeWinPEMedia to create bootable ISO
+16. Verify ISO (5-point check: size, ISO9660, El Torito, boot files)
 ```
 
 ### Key Files for PE Building
@@ -472,7 +473,7 @@ The WinPE Builder uses Windows ADK (Assessment and Deployment Kit) to create boo
 | `src/tools.rs` | Tool management (backup + PE + sysprep tools) | ~1,900 |
 | `src/updater.rs` | Auto-update from GitHub releases (check, download, self-replace) | ~500 |
 | `src/adk_packages.rs` | ADK optional component management | ~960 |
-| `src/pe_fixes.rs` | PE fixes (DPI, fonts, WallpaperHost, wallpaper registry) | ~980 |
+| `src/pe_fixes.rs` | PE fixes (DPI, fonts, WallpaperHost, crash dialogs, long paths) | ~700 |
 | `src/main.rs` | Application entry point, UI callbacks | ~2,400 |
 | `src/ui/main.slint` | Full UI layout (sidebar + all pages) | ~3,800 |
 | `assets/wallpaper.jpg` | Branding wallpaper (embedded in EXE at compile time) | 917 KB |
@@ -497,11 +498,16 @@ X:\Tools\Launchers\launch.cmd
 4. Creates user profile folders
 5. Sets environment variables (USERPROFILE, APPDATA, etc.)
 6. Starts network services (Eaphost, dot3svc, wlansvc)
-7. Creates desktop shortcuts via PowerShell
-8. Launches auto-start tools (PENetwork)
-9. Launches the shell (WinXShell)
+7. Starts netprofm + NlaSvc with SystemSetupInProgress trick (clears flag → starts services → restores flag)
+8. Creates desktop shortcuts via PowerShell
+9. Launches auto-start tools (PENetwork)
+10. Launches the shell (WinXShell)
 
 This approach is critical because many tools expect environment variables and folders to exist.
+
+**Note**: Driver signature enforcement is disabled in the BCD stores at build time (Step 14),
+so WiFi protocol drivers (nwifi.sys, vwififlt.sys) load without "cannot verify digital
+signature" errors. See DECISIONS.md ADR-008.
 
 ### PE Tools Folder Structure
 

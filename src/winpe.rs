@@ -201,7 +201,52 @@ pub fn create_bcd_store(bcd_path: &Path, boot_wim_path: &str, for_uefi: bool) ->
         }
     }
 
+    // Disable driver signature enforcement so WiFi protocol drivers can load.
+    // WiFi drivers (nwifi.sys, vwififlt.sys, etc.) are file-copied from install.wim,
+    // not DISM-injected, so WinPE's code integrity checks would reject them at boot.
+    disable_driver_signature_enforcement(bcd_path)?;
+
     println!("  {} BCD store created successfully", mode_name);
+    Ok(())
+}
+
+/// Disable driver signature enforcement in a BCD store.
+///
+/// WinPE enforces driver signature verification by default. Drivers that are
+/// manually copied (not DISM-injected) into System32\Drivers\ fail this check
+/// at boot time with "cannot verify digital signature" errors.
+///
+/// This is how PhoenixPE solves the same problem — see 700-BCD.script lines
+/// 184-199 (BypassDriverSigning section). We use three methods for maximum
+/// compatibility across Windows 10/11 PE versions:
+///
+/// 1. loadoptions DDISABLE_INTEGRITY_CHECKS — traditional WinPE approach
+/// 2. nointegritychecks on — modern explicit disable
+/// 3. testsigning on — allows test-signed and unsigned drivers
+///
+/// If any one method fails (e.g., older bcdedit version), the others still work.
+///
+/// # Arguments
+/// * `bcd_path` - Path to the BCD store file to modify
+fn disable_driver_signature_enforcement(bcd_path: &Path) -> Result<(), String> {
+    let bcd = bcd_path.to_string_lossy().to_string();
+
+    // Method 1: Set loadoptions DDISABLE_INTEGRITY_CHECKS
+    // This is the traditional WinPE approach (PhoenixPE uses this)
+    // The leading 'D' is intentional — it's a Windows boot option prefix
+    let _ = run_bcdedit(&["/store", &bcd, "/set", "{default}",
+        "loadoptions", "DDISABLE_INTEGRITY_CHECKS"]);
+
+    // Method 2: Set nointegritychecks on
+    // This is the modern approach — explicitly disables kernel code integrity checks
+    let _ = run_bcdedit(&["/store", &bcd, "/set", "{default}",
+        "nointegritychecks", "on"]);
+
+    // Method 3: Set testsigning on
+    // Allows test-signed and unsigned drivers to load
+    let _ = run_bcdedit(&["/store", &bcd, "/set", "{default}",
+        "testsigning", "on"]);
+
     Ok(())
 }
 
@@ -566,7 +611,8 @@ pub fn validate_build_config(config: &PeBuildConfig) -> ValidationResult {
                 What to do:\n\
                 1. Click 'Install Dependencies' to install the ADK, or\n\
                 2. Disable 'Install ADK Packages' in the build options, or\n\
-                3. Download ADK manually from: https://go.microsoft.com/fwlink/?linkid=2243390"
+                3. Download ADK manually from: https://go.microsoft.com/fwlink/?linkid=2289980\n\
+                Note: The ADK installer says 'Windows 10' in its title but supports Windows 11."
                     .to_string()
             );
         }
@@ -1100,7 +1146,7 @@ pub fn check_pe_build_dependencies() -> DependencyCheckResult {
 
     if !result.adk_installed {
         result.all_satisfied = false;
-        result.errors.push("Windows ADK not installed. Download from: https://go.microsoft.com/fwlink/?linkid=2243390".to_string());
+        result.errors.push("Windows ADK not installed. Download from: https://go.microsoft.com/fwlink/?linkid=2289980 (supports Windows 11)".to_string());
         println!("[ERROR] ADK not installed");
     }
 
@@ -1364,7 +1410,10 @@ pub fn install_adk() -> InstallResult {
     }
 
     // Method 1: Direct download and install (most reliable)
-    println!("Downloading Windows ADK installer directly from Microsoft...");
+    // NOTE: The ADK installer's window title says "Windows 10" but the latest ADK
+    // (10.1.26100.2454) fully supports Windows 11 25H2/24H2. The "10" is the kit version.
+    println!("Downloading Windows ADK installer from Microsoft...");
+    println!("(The installer says 'Windows 10' in its title but supports Windows 11)");
     println!("URL: {}", ADK_DOWNLOAD_URL);
 
     let temp_dir = std::env::temp_dir();
@@ -2098,19 +2147,23 @@ pub struct PeBuildResult {
 }
 
 /// ADK Version Information
-/// The WinPE version must match the ADK version for package installation
+/// The WinPE version must match the ADK version for package installation.
+/// NOTE: The ADK installer shows "Windows 10" in its title bar and installs to
+/// "C:\Program Files (x86)\Windows Kits\10\" — the "10" is the KIT version number,
+/// NOT the target OS. The latest ADK fully supports Windows 11.
 ///
-/// Windows ADK for Windows 11 version 24H2 - 10.1.26100.1
-///   ADK: https://go.microsoft.com/fwlink/?linkid=2271337
-///   WinPE Addon: https://go.microsoft.com/fwlink/?linkid=2271338
+/// Windows ADK 10.1.26100.2454 (December 2024) — LATEST, used by MasterBooter
+///   Supports: Windows 11 25H2/24H2 + all earlier Windows 10/11
+///   ADK: https://go.microsoft.com/fwlink/?linkid=2289980
+///   WinPE Addon: https://go.microsoft.com/fwlink/?linkid=2289981
 ///
-/// Windows ADK for Windows 11 version 23H2 - 10.1.25398.1
-///   ADK: https://go.microsoft.com/fwlink/?linkid=2243390
-///   WinPE Addon: https://go.microsoft.com/fwlink/?linkid=2243391
-///
-/// Windows ADK for Windows 11 version 22H2 - 10.1.22621.1 (Current)
-///   ADK: https://go.microsoft.com/fwlink/?linkid=2196127
-///   WinPE Addon: https://go.microsoft.com/fwlink/?linkid=2196224
+/// Older versions (for reference only):
+///   Windows ADK for Windows 11 version 24H2 - 10.1.26100.1
+///     ADK: https://go.microsoft.com/fwlink/?linkid=2271337
+///   Windows ADK for Windows 11 version 23H2 - 10.1.25398.1
+///     ADK: https://go.microsoft.com/fwlink/?linkid=2243390
+///   Windows ADK for Windows 11 version 22H2 - 10.1.22621.1
+///     ADK: https://go.microsoft.com/fwlink/?linkid=2196127
 
 /// Find oscdimg.exe from the Windows ADK
 /// oscdimg is used to create bootable ISO files
@@ -2829,6 +2882,35 @@ pub fn build_pe_iso(
                 3. Check that enough disk space is available in TEMP folder".to_string(),
             output_path: None,
         };
+    }
+
+    // ============================================
+    // STEP 4.9: Disable driver signature enforcement in BCD
+    // ============================================
+    // WiFi protocol drivers (nwifi.sys, vwififlt.sys, wfplwfs.sys) are copied
+    // from install.wim into the PE image. Without this BCD setting, Windows
+    // rejects them at boot time with "cannot verify digital signature" errors.
+    // This matches PhoenixPE's approach (700-BCD.script BypassDriverSigning).
+    progress_callback(65, "Configuring boot options for driver compatibility...");
+
+    // Disable signature enforcement in BIOS BCD (media/boot/BCD)
+    let bios_bcd = boot_dir.join("BCD");
+    if bios_bcd.exists() {
+        if let Err(e) = disable_driver_signature_enforcement(&bios_bcd) {
+            println!("Warning: Failed to set BIOS BCD driver bypass: {}", e);
+        } else {
+            println!("  BIOS BCD: driver signature enforcement disabled");
+        }
+    }
+
+    // Disable signature enforcement in UEFI BCD (media/EFI/Microsoft/Boot/BCD)
+    let uefi_bcd = efi_microsoft_dir.join("BCD");
+    if uefi_bcd.exists() {
+        if let Err(e) = disable_driver_signature_enforcement(&uefi_bcd) {
+            println!("Warning: Failed to set UEFI BCD driver bypass: {}", e);
+        } else {
+            println!("  UEFI BCD: driver signature enforcement disabled");
+        }
     }
 
     // Step 5: Build ISO
@@ -3694,6 +3776,20 @@ pub fn configure_pe_shell(
     launch_script.push_str("    echo   WLAN service started - WiFi adapters should be available\r\n");
     launch_script.push_str(")\r\n\r\n");
 
+    // --- Start netprofm with SystemSetupInProgress trick ---
+    // WinPE sets HKLM\SYSTEM\Setup\SystemSetupInProgress = 1 which tells Windows
+    // "we're in setup mode." The netprofm (Network List Manager) service refuses
+    // to start properly while this flag is set. PhoenixPE's trick: temporarily
+    // set it to 0 before starting netprofm, then restore it to 1 after.
+    launch_script.push_str("REM Temporarily clear SystemSetupInProgress so netprofm will start.\r\n");
+    launch_script.push_str("REM netprofm (Network List Manager) won't start in WinPE setup mode.\r\n");
+    launch_script.push_str("REM PhoenixPE uses this trick: clear the flag, start the service, restore it.\r\n");
+    launch_script.push_str("reg add \"HKLM\\SYSTEM\\Setup\" /v SystemSetupInProgress /t REG_DWORD /d 0 /f >nul 2>&1\r\n");
+    launch_script.push_str("net start netprofm 2>nul\r\n");
+    launch_script.push_str("net start NlaSvc 2>nul\r\n");
+    launch_script.push_str("REM Restore SystemSetupInProgress for WinPE compatibility\r\n");
+    launch_script.push_str("reg add \"HKLM\\SYSTEM\\Setup\" /v SystemSetupInProgress /t REG_DWORD /d 1 /f >nul 2>&1\r\n\r\n");
+
     launch_script.push_str("REM Give network adapters time to initialize after driver loading\r\n");
     launch_script.push_str("ping 127.0.0.1 -n 3 > nul\r\n\r\n");
 
@@ -4354,22 +4450,28 @@ pub fn customize_wim_with_config(
             if source_is_winre {
                 println!("Source is WinRE - WiFi drivers already built in, skipping extraction");
             } else if source_is_iso {
-                progress(42, "Extracting WiFi files from ISO source media...");
+                progress(42, "Extracting WiFi + touchpad drivers from ISO...");
                 match extract_wifi_files_from_source(&config.source_path) {
                     Ok(wifi_dir) => {
                         // The extracted folder contains complete DriverStore packages
-                        // that DISM can properly install (unlike loose INF+sys pairs)
+                        // that DISM can properly install (unlike loose INF+sys pairs).
+                        // Includes WiFi adapter drivers AND touchpad/I2C HID drivers.
                         let driver_store = wifi_dir.join("1").join("Windows")
                             .join("System32").join("DriverStore").join("FileRepository");
                         if driver_store.exists() {
-                            println!("  Found WiFi driver packages in DriverStore");
+                            println!("  Found WiFi + touchpad driver packages in DriverStore");
                             all_driver_paths.push(driver_store);
                         }
+
+                        // Note: We also extract hidi2c.sys and hidi2c.inf as loose files
+                        // but DISM can't inject loose INFs that reference files in other dirs.
+                        // The DriverStore packages (hidi2c.inf_*, ialpss2_i2c*, etc.) are
+                        // self-contained and DISM handles them properly via the DriverStore path above.
                     }
                     Err(e) => {
-                        println!("Warning: WiFi extraction from ISO failed: {}", e);
-                        println!("WiFi adapters may not be detected in the PE.");
-                        println!("Tip: Place WiFi drivers in a Drivers/ folder next to the EXE.");
+                        println!("Warning: WiFi/touchpad extraction from ISO failed: {}", e);
+                        println!("WiFi adapters and touchpads may not work in the PE.");
+                        println!("Tip: Place drivers in a Drivers/ folder next to the EXE.");
                     }
                 }
             } else {
@@ -4823,7 +4925,7 @@ fn inject_branding(mount_dir: &Path) -> Result<bool, String> {
 /// Ok(PathBuf) to temp folder containing extracted `1\Windows\...` structure,
 /// or Err if extraction failed.
 pub fn extract_wifi_files_from_source(iso_path: &Path) -> Result<PathBuf, String> {
-    println!("\n--- Extracting WiFi Files from ISO Source Media ---");
+    println!("\n--- Extracting WiFi + Touchpad Drivers from ISO Source Media ---");
     println!("  ISO: {}", iso_path.display());
 
     // We need 7-Zip to extract specific files from the WIM inside the ISO
@@ -4899,11 +5001,13 @@ pub fn extract_wifi_files_from_source(iso_path: &Path) -> Result<PathBuf, String
         .map_err(|e| format!("Failed to create temp extraction folder: {}", e))?;
 
     // ============================================
-    // STEP 4: Extract WiFi-specific files using 7-Zip
+    // STEP 4: Extract WiFi + Touchpad drivers using 7-Zip
     // ============================================
     // The "1\" prefix selects WIM image index 1 (the first Windows edition).
-    // We only extract WiFi-related files — NOT the full 4+ GB image.
-    println!("  Extracting WiFi files from install.wim (this may take a moment)...");
+    // We extract WiFi files AND touchpad/I2C drivers — NOT the full 4+ GB image.
+    // Touchpad drivers are included because WinPE only has basic USB HID;
+    // most modern laptops use I2C-connected touchpads that won't work without drivers.
+    println!("  Extracting WiFi + touchpad drivers from install.wim (this may take a moment)...");
 
     let output = Command::new(&seven_zip)
         .arg("x")
@@ -4963,6 +5067,101 @@ pub fn extract_wifi_files_from_source(iso_path: &Path) -> Result<PathBuf, String
         .arg(r"1\Windows\System32\DriverStore\FileRepository\netr73*")
         // Marvell WiFi
         .arg(r"1\Windows\System32\DriverStore\FileRepository\mrvlpcie*")
+        // --- Touchpad / I2C HID / Input device drivers ---
+        // WinPE only includes basic USB HID. Modern laptops use I2C-connected
+        // touchpads (ELAN, Synaptics, Alps) which need these drivers for
+        // touchpad movement, clicking, and scroll gestures.
+        //
+        // Driver stack: I2C controller → hidi2c.sys → HID class → touchpad filter
+        //
+        // Microsoft I2C HID miniport (connects I2C bus to Windows HID stack)
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\hidi2c.inf*")
+        // I2C HID system driver + INF (fallback if not in DriverStore)
+        .arg(r"1\Windows\System32\Drivers\hidi2c.sys")
+        .arg(r"1\Windows\INF\hidi2c.inf")
+        // Intel SerialIO I2C controllers (most common on Intel laptops)
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\ialpss2_i2c*")
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\ialpss2_gpio*")
+        // Intel SerialIO (older Intel platforms — Haswell through Skylake)
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\iaLPSS_I2C*")
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\iaLPSS_GPIO*")
+        // Intel THC (Touch Host Controller — newer platforms like Alder Lake+)
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\intcthc*")
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\iathc*")
+        // AMD I2C controller (AMD laptops)
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\amdi2c*")
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\amdgpio*")
+        // Synaptics touchpad drivers
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\synpd*")
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\smbus*")
+        // ELAN touchpad drivers
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\etd*")
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\elan*")
+        // Alps touchpad drivers
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\alps*")
+        // Goodix / FocalTech touchpad (used on some AMD/ARM laptops)
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\goodix*")
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\focal*")
+        // Microsoft Precision Touchpad (class driver — provides gestures)
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\mshidkmdf*")
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\hidinterrupt*")
+        // --- Registry hives (for copying service entries into PE) ---
+        // PhoenixPE copies entire service subtrees from install.wim's registry
+        // instead of manually creating individual values. This gets ALL subkeys,
+        // parameters, security descriptors, and binding info automatically.
+        .arg(r"1\Windows\System32\config\SYSTEM")
+        .arg(r"1\Windows\System32\config\SOFTWARE")
+        // --- Additional WLAN DLLs (PhoenixPE includes these for full WiFi stack) ---
+        // Connection dialog and preferences
+        .arg(r"1\Windows\System32\WLanConn.dll")
+        .arg(r"1\Windows\System32\wlandlg.dll")
+        .arg(r"1\Windows\System32\WLanHC.dll")
+        .arg(r"1\Windows\System32\WlanMediaManager.dll")
+        .arg(r"1\Windows\System32\WlanMM.dll")
+        .arg(r"1\Windows\System32\wlanpref.dll")
+        .arg(r"1\Windows\System32\wlansvcpal.dll")
+        .arg(r"1\Windows\System32\wlanutil.dll")
+        .arg(r"1\Windows\System32\WlanRadioManager.dll")
+        .arg(r"1\Windows\System32\mobilenetworking.dll")
+        // --- dot3 (802.1X) DLLs — needed for WiFi authentication ---
+        .arg(r"1\Windows\System32\dot3api.dll")
+        .arg(r"1\Windows\System32\dot3cfg.dll")
+        .arg(r"1\Windows\System32\dot3dlg.dll")
+        .arg(r"1\Windows\System32\dot3gpclnt.dll")
+        .arg(r"1\Windows\System32\dot3gpui.dll")
+        .arg(r"1\Windows\System32\dot3hc.dll")
+        .arg(r"1\Windows\System32\dot3msm.dll")
+        .arg(r"1\Windows\System32\dot3svc.dll")
+        .arg(r"1\Windows\System32\dot3ui.dll")
+        // --- L2/802.1X authentication DLLs ---
+        .arg(r"1\Windows\System32\l2gpstore.dll")
+        .arg(r"1\Windows\System32\l2nacp.dll")
+        .arg(r"1\Windows\System32\onex.dll")
+        .arg(r"1\Windows\System32\onexui.dll")
+        // --- Windows Connection Manager (WCM) DLLs ---
+        // wcmsvc is a dependency of WlanSvc — PhoenixPE installs it fully
+        .arg(r"1\Windows\System32\wcmapi.dll")
+        .arg(r"1\Windows\System32\wcmcsp.dll")
+        .arg(r"1\Windows\System32\wcmsvc.dll")
+        .arg(r"1\Windows\System32\NetworkUXBroker.dll")
+        // --- EAP credential DLLs ---
+        .arg(r"1\Windows\System32\cngcredui.dll")
+        .arg(r"1\Windows\System32\cngprovider.dll")
+        // --- Network helper DLLs ---
+        .arg(r"1\Windows\System32\VAN.dll")
+        .arg(r"1\Windows\System32\RMapi.dll")
+        .arg(r"1\Windows\System32\netevent.dll")
+        // --- Additional kernel drivers ---
+        .arg(r"1\Windows\System32\Drivers\wfplwfs.sys")
+        // --- Additional INF files ---
+        .arg(r"1\Windows\INF\netlldp.inf")
+        .arg(r"1\Windows\INF\ndiscap.inf")
+        // --- Additional DriverStore packages for WiFi protocol/filter drivers ---
+        // These contain the complete Ndi binding info that DISM needs
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\netnwifi.inf*")
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\netvwifibus.inf*")
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\netvwififlt.inf*")
+        .arg(r"1\Windows\System32\DriverStore\FileRepository\netvwifimp.inf*")
         // --- Suppress prompts, don't show progress bar ---
         .arg("-y")
         .output()
@@ -5206,6 +5405,28 @@ pub fn extract_wifi_drivers_from_local_windows() -> Result<PathBuf, String> {
     Ok(extract_dir)
 }
 
+/// Recursively copy an entire directory tree from src to dst.
+/// Creates all subdirectories and copies all files.
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    fs::create_dir_all(dst)
+        .map_err(|e| format!("Failed to create dir {}: {}", dst.display(), e))?;
+
+    let entries = fs::read_dir(src)
+        .map_err(|e| format!("Failed to read dir {}: {}", src.display(), e))?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let dest_path = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_recursive(&path, &dest_path)?;
+        } else {
+            fs::copy(&path, &dest_path)
+                .map_err(|e| format!("Failed to copy {}: {}", path.display(), e))?;
+        }
+    }
+    Ok(())
+}
+
 pub fn inject_wifi_support(mount_dir: &Path, source_windows_dir: &Path) -> Result<(), String> {
     println!("\n--- Injecting WiFi/WLAN Support ---");
     println!("  Source: {}", source_windows_dir.display());
@@ -5237,7 +5458,7 @@ pub fn inject_wifi_support(mount_dir: &Path, source_windows_dir: &Path) -> Resul
     // Without these, "net start wlansvc" will fail because the service doesn't exist.
 
     let wlan_dlls = [
-        // Core WLAN service and API files (REQUIRED)
+        // ===== Core WLAN service and API files (REQUIRED) =====
         "wlansvc.dll",          // WLAN AutoConfig service DLL
         "wlanapi.dll",          // WLAN API (used by PENetwork and other tools)
         "wlancfg.dll",          // WLAN configuration (used by netsh wlan)
@@ -5248,7 +5469,52 @@ pub fn inject_wifi_support(mount_dir: &Path, source_windows_dir: &Path) -> Resul
         "wlgpclnt.dll",        // WLAN Group Policy client
         "wlanext.exe",          // WLAN extensibility framework
         "wifitask.exe",         // WiFi background task
-        // Dependency DLLs (required for Windows 10 1607+)
+        // ===== Additional WLAN DLLs (PhoenixPE includes these) =====
+        "WLanConn.dll",         // WLAN connection dialog
+        "wlandlg.dll",          // WLAN dialog
+        "WLanHC.dll",           // WLAN health check
+        "WlanMediaManager.dll", // WLAN media manager
+        "WlanMM.dll",           // WLAN multimedia
+        "wlanpref.dll",         // WLAN preferences
+        "wlansvcpal.dll",       // WLAN service PAL (Platform Abstraction Layer)
+        "wlanutil.dll",         // WLAN utilities
+        "WlanRadioManager.dll", // WLAN radio/airplane mode manager
+        "mobilenetworking.dll", // Mobile networking support
+        // ===== dot3 (802.1X) DLLs — needed for WiFi authentication =====
+        "dot3api.dll",          // dot3 API (wired/wireless 802.1X)
+        "dot3cfg.dll",          // dot3 configuration
+        "dot3dlg.dll",          // dot3 dialog
+        "dot3gpclnt.dll",       // dot3 Group Policy client
+        "dot3gpui.dll",         // dot3 GP UI
+        "dot3hc.dll",           // dot3 health check
+        "dot3msm.dll",          // dot3 media streaming manager
+        "dot3svc.dll",          // dot3 service DLL
+        "dot3ui.dll",           // dot3 user interface
+        // ===== L2/802.1X authentication DLLs =====
+        "l2gpstore.dll",        // L2 GP store
+        "l2nacp.dll",           // L2 NACP (Network Access Control Protocol)
+        "onex.dll",             // 802.1X authentication engine
+        "onexui.dll",           // 802.1X UI
+        // ===== Windows Connection Manager (WCM) DLLs =====
+        // wcmsvc is a dependency of WlanSvc — PhoenixPE installs it fully
+        "wcmapi.dll",           // WCM API
+        "wcmcsp.dll",           // WCM CSP (Configuration Service Provider)
+        "wcmsvc.dll",           // WCM service DLL
+        "NetworkUXBroker.dll",  // Network UX broker (notifications)
+        // ===== Cryptographic provider DLLs =====
+        // rsaenh.dll is the RSA Enhanced Cryptographic Provider — it implements
+        // the actual WPA-PSK/WPA2-PSK key derivation and encryption. Without it,
+        // the WiFi handshake fails even if all WLAN services start correctly.
+        // PhoenixPE includes this, and every PENetwork guide mentions it.
+        "rsaenh.dll",           // RSA Enhanced Crypto Provider (WPA2 key handshake)
+        // ===== EAP credential DLLs =====
+        "cngcredui.dll",        // CNG credential UI (EAP authentication)
+        "cngprovider.dll",      // CNG provider (EAP)
+        // ===== Network helper DLLs =====
+        "VAN.dll",              // Virtual Adapter Networking
+        "RMapi.dll",            // Radio Management API
+        "netevent.dll",         // Network event logging
+        // ===== Dependency DLLs (required for Windows 10 1607+) =====
         // Without these, wlancfg.dll fails to load and netsh wlan commands break
         "dmcmnutils.dll",       // Device Management common utilities
         "mdmregistration.dll",  // MDM registration
@@ -5302,6 +5568,7 @@ pub fn inject_wifi_support(mount_dir: &Path, source_windows_dir: &Path) -> Resul
         ("Drivers/vwififlt.sys", "vwififlt.sys"),     // Virtual WiFi filter
         ("Drivers/vwifibus.sys", "vwifibus.sys"),     // Virtual WiFi bus
         ("Drivers/WdiWiFi.sys", "WdiWiFi.sys"),      // WiFi diagnostics driver
+        ("Drivers/wfplwfs.sys", "wfplwfs.sys"),       // Windows Filtering Platform Lightweight Filter
     ];
 
     for (src_rel, name) in &driver_files {
@@ -5326,6 +5593,8 @@ pub fn inject_wifi_support(mount_dir: &Path, source_windows_dir: &Path) -> Resul
         "netnwifi.inf",        // NativeWiFi protocol driver
         "netvwififlt.inf",     // Virtual WiFi filter driver
         "netvwifibus.inf",     // Virtual WiFi bus driver
+        "netlldp.inf",         // LLDP (Link Layer Discovery Protocol)
+        "ndiscap.inf",         // NDIS capture filter
     ];
 
     for inf in &inf_files {
@@ -5334,6 +5603,34 @@ pub fn inject_wifi_support(mount_dir: &Path, source_windows_dir: &Path) -> Resul
         if source.exists() {
             let _ = fs::copy(&source, &dest);
             println!("  Copied INF: {}", inf);
+        }
+    }
+
+    // Copy WiFi protocol DriverStore packages (contain Ndi binding info)
+    // These are the protocol-level driver packages, NOT adapter drivers.
+    // They tell Windows how NativeWifiP, vwifibus, vwififlt bind to the network stack.
+    let ds_src = sys32.join("DriverStore").join("FileRepository");
+    let pe_ds = pe_sys32.join("DriverStore").join("FileRepository");
+    if ds_src.exists() {
+        let _ = fs::create_dir_all(&pe_ds);
+        let wifi_ds_patterns = ["netnwifi.inf", "netvwifibus.inf", "netvwififlt.inf", "netvwifimp.inf"];
+        for pattern in &wifi_ds_patterns {
+            // Each DriverStore folder looks like "netnwifi.inf_amd64_abc123..."
+            if let Ok(entries) = fs::read_dir(&ds_src) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_lowercase();
+                    if name.starts_with(pattern) {
+                        let src_folder = entry.path();
+                        let dst_folder = pe_ds.join(entry.file_name());
+                        // Recursively copy the entire DriverStore package folder
+                        if let Err(e) = copy_dir_recursive(&src_folder, &dst_folder) {
+                            println!("  Warning: Failed to copy DriverStore {}: {}", name, e);
+                        } else {
+                            println!("  Copied DriverStore package: {}", name);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -5378,210 +5675,396 @@ pub fn inject_wifi_support(mount_dir: &Path, source_windows_dir: &Path) -> Resul
     }
 
     // ============================================
-    // STEP D: Add WLAN service registry entries
+    // STEP C.5: Copy wlan.mof (WMI WiFi definition file)
     // ============================================
-    // Register the WlanSvc service and NativeWifiP driver in the WIM's registry.
-    // We do this by loading the SYSTEM and SOFTWARE hives from the mounted WIM,
-    // adding the required keys, then unloading them.
+    // wlan.mof defines WMI classes for WiFi (e.g., MSNdis_80211_*).
+    // Some network tools and PENetwork extensions use WMI to query WiFi state.
+    // PhoenixPE copies this file. Located at System32\wbem\wlan.mof in install.wim.
+    let wbem_src = source_windows_dir.join("System32").join("wbem");
+    let wbem_dest = mount_dir.join("Windows").join("System32").join("wbem");
+    let wlan_mof_src = wbem_src.join("wlan.mof");
+    if wlan_mof_src.exists() {
+        // wbem directory should already exist in PE, but ensure it does
+        let _ = fs::create_dir_all(&wbem_dest);
+        match fs::copy(&wlan_mof_src, wbem_dest.join("wlan.mof")) {
+            Ok(_) => println!("  Copied wlan.mof (WMI WiFi definitions)"),
+            Err(e) => println!("  Warning: Failed to copy wlan.mof: {}", e),
+        }
+    } else {
+        println!("  wlan.mof not found in source (may be OK for older Windows versions)");
+    }
 
-    println!("  Adding WLAN service registry entries...");
+    // ============================================
+    // STEP D: Copy WLAN service registry entries from install.wim
+    // ============================================
+    // CRITICAL CHANGE: Instead of manually creating individual registry values
+    // (which was missing critical subkeys like NativeWifiP\Linkage, Ndi binding
+    // info, network filter registrations, etc.), we now copy ENTIRE service
+    // subtrees from install.wim's SYSTEM/SOFTWARE hives into the PE's hives.
+    //
+    // This approach matches how PhoenixPE does it — using "reg copy /s /f" to
+    // get ALL subkeys, parameters, security descriptors, and binding info
+    // automatically. The old manual approach was confirmed NOT working because
+    // it missed critical registry subkeys that Windows needs for WLAN binding.
 
-    let system_hive = pe_sys32.join("config").join("SYSTEM");
-    let software_hive = pe_sys32.join("config").join("SOFTWARE");
+    println!("  Copying WLAN service registry entries from install.wim...");
 
-    if !system_hive.exists() {
-        println!("  Warning: SYSTEM hive not found at {}", system_hive.display());
+    // PE hive paths (inside the mounted WIM)
+    let pe_system_hive = pe_sys32.join("config").join("SYSTEM");
+    let pe_software_hive = pe_sys32.join("config").join("SOFTWARE");
+
+    // Source hive paths (extracted from install.wim via 7-Zip)
+    let src_system_hive = sys32.join("config").join("SYSTEM");
+    let src_software_hive = sys32.join("config").join("SOFTWARE");
+
+    if !pe_system_hive.exists() {
+        println!("  Warning: PE SYSTEM hive not found at {}", pe_system_hive.display());
         println!("  WiFi may not work - registry entries could not be added");
         return Ok(());
     }
 
-    // Load the SYSTEM hive to a temporary location
-    let load_result = Command::new("reg")
-        .args(["load", r"HKLM\PE-SYSTEM", &system_hive.to_string_lossy()])
-        .output();
-
-    let system_loaded = match load_result {
-        Ok(out) => {
-            if out.status.success() {
-                println!("  Loaded SYSTEM hive");
-                true
-            } else {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                // If already loaded, that's OK
-                if stderr.contains("already in use") || stderr.contains("being used") {
-                    println!("  SYSTEM hive already loaded");
-                    true
-                } else {
-                    println!("  Warning: Failed to load SYSTEM hive: {}", stderr);
-                    false
-                }
-            }
-        }
-        Err(e) => {
-            println!("  Warning: Could not run reg load: {}", e);
-            false
-        }
-    };
-
-    if system_loaded {
-        // Add WlanSvc service entry
-        // This tells Windows how to start the WLAN AutoConfig service
-        let svc_path = r"HKLM\PE-SYSTEM\ControlSet001\services\WlanSvc";
-        let params_path = format!("{}\\Parameters", svc_path);
-
-        // Create WlanSvc service key
-        let _ = Command::new("reg").args(["add", svc_path, "/v", "DisplayName",
-            "/t", "REG_SZ", "/d", "WLAN AutoConfig", "/f"]).output();
-        let _ = Command::new("reg").args(["add", svc_path, "/v", "ErrorControl",
-            "/t", "REG_DWORD", "/d", "1", "/f"]).output();
-        let _ = Command::new("reg").args(["add", svc_path, "/v", "Group",
-            "/t", "REG_SZ", "/d", "TDI", "/f"]).output();
-        let _ = Command::new("reg").args(["add", svc_path, "/v", "ImagePath",
-            "/t", "REG_EXPAND_SZ", "/d",
-            "%SystemRoot%\\system32\\svchost.exe -k LocalSystemNetworkRestricted",
-            "/f"]).output();
-        let _ = Command::new("reg").args(["add", svc_path, "/v", "ObjectName",
-            "/t", "REG_SZ", "/d", "LocalSystem", "/f"]).output();
-        let _ = Command::new("reg").args(["add", svc_path, "/v", "Start",
-            "/t", "REG_DWORD", "/d", "2", "/f"]).output();
-        let _ = Command::new("reg").args(["add", svc_path, "/v", "Type",
-            "/t", "REG_DWORD", "/d", "32", "/f"]).output();
-        // Dependencies: NativeWifiP, RpcSs, Ndisuio, Eaphost
-        // NOTE: Do NOT include wcmsvc - it doesn't exist in WinPE and causes error 1068
-        let _ = Command::new("reg").args(["add", svc_path, "/v", "DependOnService",
-            "/t", "REG_MULTI_SZ", "/d", "nativewifip\0RpcSs\0Ndisuio\0Eaphost",
-            "/f"]).output();
-
-        // WlanSvc Parameters subkey (tells svchost which DLL to load)
-        let _ = Command::new("reg").args(["add", &params_path, "/v", "ServiceDll",
-            "/t", "REG_EXPAND_SZ", "/d", "%SystemRoot%\\System32\\wlansvc.dll",
-            "/f"]).output();
-        let _ = Command::new("reg").args(["add", &params_path, "/v", "ServiceDllUnloadOnStop",
-            "/t", "REG_DWORD", "/d", "1", "/f"]).output();
-        let _ = Command::new("reg").args(["add", &params_path, "/v", "ServiceMain",
-            "/t", "REG_SZ", "/d", "WlanSvcMain", "/f"]).output();
-
-        println!("  Added WlanSvc service entry");
-
-        // Add NativeWifiP driver entry (kernel driver that WiFi adapters bind to)
-        let nwifi_path = r"HKLM\PE-SYSTEM\ControlSet001\services\NativeWifiP";
-        let _ = Command::new("reg").args(["add", nwifi_path, "/v", "DisplayName",
-            "/t", "REG_SZ", "/d", "NativeWiFi Filter", "/f"]).output();
-        let _ = Command::new("reg").args(["add", nwifi_path, "/v", "ErrorControl",
-            "/t", "REG_DWORD", "/d", "1", "/f"]).output();
-        let _ = Command::new("reg").args(["add", nwifi_path, "/v", "Group",
-            "/t", "REG_SZ", "/d", "NDIS", "/f"]).output();
-        let _ = Command::new("reg").args(["add", nwifi_path, "/v", "ImagePath",
-            "/t", "REG_EXPAND_SZ", "/d",
-            "%WinDir%\\system32\\DRIVERS\\nwifi.sys", "/f"]).output();
-        let _ = Command::new("reg").args(["add", nwifi_path, "/v", "Start",
-            "/t", "REG_DWORD", "/d", "3", "/f"]).output();
-        let _ = Command::new("reg").args(["add", nwifi_path, "/v", "Type",
-            "/t", "REG_DWORD", "/d", "1", "/f"]).output();
-
-        println!("  Added NativeWifiP driver entry");
-
-        // Add vwififlt driver entry (Virtual WiFi filter driver)
-        let vwifi_path = r"HKLM\PE-SYSTEM\ControlSet001\services\vwififlt";
-        let _ = Command::new("reg").args(["add", vwifi_path, "/v", "ImagePath",
-            "/t", "REG_EXPAND_SZ", "/d",
-            "system32\\DRIVERS\\vwififlt.sys", "/f"]).output();
-        let _ = Command::new("reg").args(["add", vwifi_path, "/v", "Start",
-            "/t", "REG_DWORD", "/d", "3", "/f"]).output();
-        let _ = Command::new("reg").args(["add", vwifi_path, "/v", "Type",
-            "/t", "REG_DWORD", "/d", "1", "/f"]).output();
-        let _ = Command::new("reg").args(["add", vwifi_path, "/v", "Group",
-            "/t", "REG_SZ", "/d", "NDIS", "/f"]).output();
-
-        println!("  Added vwififlt driver entry");
-
-        // Add WdiWiFi driver entry (WiFi diagnostics)
-        let wdiwifi_path = r"HKLM\PE-SYSTEM\ControlSet001\services\WdiWiFi";
-        let _ = Command::new("reg").args(["add", wdiwifi_path, "/v", "ImagePath",
-            "/t", "REG_EXPAND_SZ", "/d",
-            "system32\\DRIVERS\\WdiWiFi.sys", "/f"]).output();
-        let _ = Command::new("reg").args(["add", wdiwifi_path, "/v", "Start",
-            "/t", "REG_DWORD", "/d", "3", "/f"]).output();
-        let _ = Command::new("reg").args(["add", wdiwifi_path, "/v", "Type",
-            "/t", "REG_DWORD", "/d", "1", "/f"]).output();
-
-        println!("  Added WdiWiFi driver entry");
-
-        // Unload SYSTEM hive
-        let _ = Command::new("reg").args(["unload", r"HKLM\PE-SYSTEM"]).output();
-        println!("  Unloaded SYSTEM hive");
+    if !src_system_hive.exists() {
+        println!("  Warning: Source SYSTEM hive not found at {}", src_system_hive.display());
+        println!("  The SYSTEM hive was not extracted from install.wim.");
+        println!("  WiFi registry entries cannot be copied — WiFi will not work.");
+        return Ok(());
     }
 
-    // Load SOFTWARE hive for svchost group and netsh registration
-    if software_hive.exists() {
-        let load_sw = Command::new("reg")
-            .args(["load", r"HKLM\PE-SOFTWARE", &software_hive.to_string_lossy()])
+    // Helper: Load a registry hive, handling "already loaded" gracefully.
+    // Returns true if the hive is now loaded (either freshly or was already).
+    fn load_hive(key_name: &str, hive_path: &Path) -> bool {
+        // Try to unload first in case it was left from a previous run
+        let _ = Command::new("reg").args(["unload", key_name]).output();
+
+        let result = Command::new("reg")
+            .args(["load", key_name, &hive_path.to_string_lossy()])
             .output();
 
-        let sw_loaded = match load_sw {
-            Ok(out) => out.status.success() || {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                stderr.contains("already in use") || stderr.contains("being used")
-            },
-            Err(_) => false,
-        };
-
-        if sw_loaded {
-            // Register netsh wlan helper DLL (enables "netsh wlan show networks" etc.)
-            let netsh_path = r"HKLM\PE-SOFTWARE\Microsoft\NetSh";
-            let _ = Command::new("reg").args(["add", netsh_path, "/v", "wlancfg",
-                "/t", "REG_SZ", "/d", "wlancfg.dll", "/f"]).output();
-            println!("  Added netsh wlan helper registration");
-
-            // Add wlansvc to the LocalSystemNetworkRestricted svchost group
-            // This tells svchost.exe which services belong to this group.
-            // We need to READ the current value, append wlansvc, and write it back.
-            let svchost_path = r"HKLM\PE-SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost";
-            let query = Command::new("reg")
-                .args(["query", svchost_path, "/v", "LocalSystemNetworkRestricted"])
-                .output();
-
-            if let Ok(out) = query {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                if !stdout.contains("wlansvc") {
-                    // Read the current value and append wlansvc
-                    // The reg query output format is: "    LocalSystemNetworkRestricted    REG_MULTI_SZ    svc1\0svc2..."
-                    // We'll just add the key - reg ADD with MULTI_SZ will set it
-                    // For safety, we use a PowerShell one-liner to append to the existing list
-                    let ps_cmd = format!(
-                        "$val = (Get-ItemProperty -Path 'HKLM:\\PE-SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Svchost' -Name 'LocalSystemNetworkRestricted' -ErrorAction SilentlyContinue).LocalSystemNetworkRestricted; \
-                         if ($val -and $val -notcontains 'WlanSvc') {{ \
-                             $val = @($val) + 'WlanSvc'; \
-                             Set-ItemProperty -Path 'HKLM:\\PE-SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Svchost' -Name 'LocalSystemNetworkRestricted' -Value $val -Type MultiString \
-                         }} elseif (-not $val) {{ \
-                             New-ItemProperty -Path 'HKLM:\\PE-SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Svchost' -Name 'LocalSystemNetworkRestricted' -Value @('WlanSvc') -PropertyType MultiString -Force \
-                         }}"
-                    );
-                    let _ = Command::new("powershell")
-                        .args(["-NoProfile", "-Command", &ps_cmd])
-                        .output();
-                    println!("  Added WlanSvc to svchost group");
+        match result {
+            Ok(out) => {
+                if out.status.success() {
+                    println!("  Loaded hive: {} -> {}", hive_path.display(), key_name);
+                    true
+                } else {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    if stderr.contains("already in use") || stderr.contains("being used") {
+                        println!("  Hive already loaded: {}", key_name);
+                        true
+                    } else {
+                        println!("  Warning: Failed to load hive {}: {}", key_name, stderr.trim());
+                        false
+                    }
                 }
             }
+            Err(e) => {
+                println!("  Warning: Could not run reg load for {}: {}", key_name, e);
+                false
+            }
+        }
+    }
 
-            // Unload SOFTWARE hive
-            let _ = Command::new("reg").args(["unload", r"HKLM\PE-SOFTWARE"]).output();
-            println!("  Unloaded SOFTWARE hive");
+    // Helper: Copy a registry subtree from source to destination.
+    // Uses "reg copy /s /f" which copies ALL subkeys and values recursively.
+    fn reg_copy_subtree(src_key: &str, dst_key: &str, name: &str) {
+        let result = Command::new("reg")
+            .args(["copy", src_key, dst_key, "/s", "/f"])
+            .output();
+
+        match result {
+            Ok(out) => {
+                if out.status.success() {
+                    println!("    Copied: {}", name);
+                } else {
+                    // Not all keys exist in every Windows version — this is OK
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    if stderr.contains("unable to find") || stderr.contains("not find") {
+                        println!("    Not found (OK): {}", name);
+                    } else {
+                        println!("    Warning: {} - {}", name, stderr.trim());
+                    }
+                }
+            }
+            Err(e) => println!("    Warning: reg copy failed for {}: {}", name, e),
         }
     }
 
     // ============================================
-    // STEP E: REMOVED — DISM driver registration for netnwifi.inf / netvwififlt.inf
+    // STEP D.1: Load all four hives
     // ============================================
-    // Previously this step tried to register netnwifi.inf and netvwififlt.inf via
-    // "dism /Add-Driver", but it always failed with "Error: 2 - The system cannot
-    // find the file specified" because those INF files reference .sys files (e.g.
-    // nwifi.sys, vwififlt.sys) that DISM cannot resolve within the mounted WIM context.
-    //
-    // This step was redundant anyway — Step B already manually copies the .sys files
-    // into System32\Drivers, Step C copies the INF files, and Step D writes the
-    // registry entries that bind the drivers. That combination is sufficient for the
-    // WLAN stack to load at PE boot time without DISM registration.
+    // We load the install.wim's SYSTEM as SRC-SYSTEM, and the PE's SYSTEM as PE-SYSTEM.
+    // Then we copy service subtrees from SRC to PE using "reg copy /s /f".
+    let src_sys_loaded = load_hive(r"HKLM\SRC-SYSTEM", &src_system_hive);
+    let pe_sys_loaded = load_hive(r"HKLM\PE-SYSTEM", &pe_system_hive);
+
+    if src_sys_loaded && pe_sys_loaded {
+        // ============================================
+        // STEP D.2: Copy service subtrees from install.wim → PE
+        // ============================================
+        // These are the complete service registrations that the WLAN stack needs.
+        // Copying entire subtrees gets ALL subkeys (Linkage, Ndi, Parameters,
+        // Security, Enum, etc.) that manual "reg add" commands were missing.
+
+        println!("  Copying WLAN service subtrees...");
+
+        // --- Core WLAN services ---
+        let services = [
+            ("WlanSvc",      "WLAN AutoConfig service"),
+            ("Wcmsvc",       "Windows Connection Manager"),
+            ("NativeWifiP",  "NativeWiFi protocol driver"),
+            ("vwifibus",     "Virtual WiFi bus driver"),
+            ("vwififlt",     "Virtual WiFi filter driver"),
+            ("wdiwifi",      "WiFi Diagnostics driver"),
+            ("WFPLWFS",      "WFP Lightweight Filter driver"),
+            ("dot3svc",      "Wired AutoConfig (802.1X dependency)"),
+            ("EapHost",      "EAP authentication host"),
+            ("wcncsvc",      "Windows Connect Now service"),
+            ("tdx",          "TDI translation layer"),
+            // --- Network state/connectivity services ---
+            // netprofm = Network List Manager — PENetwork queries it to determine
+            // whether WiFi is connected/disconnected and public/private. Without
+            // the full service definition (not just AllowStart), WinPE doesn't
+            // even know what netprofm IS.
+            ("netprofm",     "Network List Manager (PENetwork needs this)"),
+            // NlaSvc = Network Location Awareness — detects whether you actually
+            // have internet connectivity after connecting to WiFi. PENetwork and
+            // Windows networking depend on NlaSvc to report network status.
+            ("NlaSvc",       "Network Location Awareness (connectivity detection)"),
+        ];
+
+        for (svc_name, description) in &services {
+            let src_key = format!(r"HKLM\SRC-SYSTEM\ControlSet001\Services\{}", svc_name);
+            let dst_key = format!(r"HKLM\PE-SYSTEM\ControlSet001\Services\{}", svc_name);
+            reg_copy_subtree(&src_key, &dst_key, description);
+        }
+
+        // --- WLAN event log registration ---
+        reg_copy_subtree(
+            r"HKLM\SRC-SYSTEM\ControlSet001\Services\EventLog\System\Microsoft-Windows-WLAN-AutoConfig",
+            r"HKLM\PE-SYSTEM\ControlSet001\Services\EventLog\System\Microsoft-Windows-WLAN-AutoConfig",
+            "WLAN event log",
+        );
+
+        // ============================================
+        // STEP D.3: Copy network filter/binding registrations
+        // ============================================
+        // These tell Windows how NativeWifiP and WFPLWFS bind to the network stack.
+        // Without these, the WiFi driver loads but can't communicate with the stack.
+
+        println!("  Copying network binding registrations...");
+
+        // Network filter GUIDs for WFPLWFS and vwifibus
+        let network_guids = [
+            ("{5CBF81BF-5055-47CD-9055-A76B2B4E3698}", "vwifibus network binding"),
+            ("{3BFD7820-D65C-4C1B-9FEA-983A019639EA}", "WFPLWFS filter #1"),
+            ("{B70D6460-3635-4D42-B866-B8AB1A24454C}", "WFPLWFS filter #2"),
+            ("{E7C3B2F0-F3C5-48DF-AF2B-10FED6D72E7A}", "WFPLWFS filter #3 (x64)"),
+            ("{E475CF9A-60CD-4439-A75F-0079CE0E18A1}", "WFPLWFS filter #4"),
+        ];
+
+        let net_class = r"{4d36e974-e325-11ce-bfc1-08002be10318}";
+        for (guid, description) in &network_guids {
+            let src_key = format!(
+                r"HKLM\SRC-SYSTEM\ControlSet001\Control\Network\{}\{}",
+                net_class, guid
+            );
+            let dst_key = format!(
+                r"HKLM\PE-SYSTEM\ControlSet001\Control\Network\{}\{}",
+                net_class, guid
+            );
+            reg_copy_subtree(&src_key, &dst_key, description);
+        }
+
+        // Copy NetworkSetup2 filter/plugin registrations
+        // These are critical for NativeWifiP and WFPLWFS to bind properly
+        reg_copy_subtree(
+            r"HKLM\SRC-SYSTEM\ControlSet001\Control\NetworkSetup2\Filters",
+            r"HKLM\PE-SYSTEM\ControlSet001\Control\NetworkSetup2\Filters",
+            "NetworkSetup2 Filters",
+        );
+        reg_copy_subtree(
+            r"HKLM\SRC-SYSTEM\ControlSet001\Control\NetworkSetup2\Plugins",
+            r"HKLM\PE-SYSTEM\ControlSet001\Control\NetworkSetup2\Plugins",
+            "NetworkSetup2 Plugins",
+        );
+
+        // ============================================
+        // STEP D.4: Copy Winlogon notification components
+        // ============================================
+        // These enable dot3svc and WlanSvc to receive session change events
+        // from Winlogon, which are needed for proper service initialization.
+
+        println!("  Copying Winlogon notification components...");
+        reg_copy_subtree(
+            r"HKLM\SRC-SYSTEM\ControlSet001\Control\Winlogon\Notifications\Components\Dot3svc",
+            r"HKLM\PE-SYSTEM\ControlSet001\Control\Winlogon\Notifications\Components\Dot3svc",
+            "Dot3svc Winlogon notification",
+        );
+        reg_copy_subtree(
+            r"HKLM\SRC-SYSTEM\ControlSet001\Control\Winlogon\Notifications\Components\Wlansvc",
+            r"HKLM\PE-SYSTEM\ControlSet001\Control\Winlogon\Notifications\Components\Wlansvc",
+            "Wlansvc Winlogon notification",
+        );
+
+        // ============================================
+        // STEP D.5: Copy additional Control keys
+        // ============================================
+        println!("  Copying additional WiFi control keys...");
+
+        // WiFi WMI tracing session
+        reg_copy_subtree(
+            r"HKLM\SRC-SYSTEM\ControlSet001\Control\WMI\Autologger\WiFiSession",
+            r"HKLM\PE-SYSTEM\ControlSet001\Control\WMI\Autologger\WiFiSession",
+            "WiFi WMI tracing session",
+        );
+
+        // Radio Management (airplane mode support)
+        reg_copy_subtree(
+            r"HKLM\SRC-SYSTEM\ControlSet001\Control\RadioManagement",
+            r"HKLM\PE-SYSTEM\ControlSet001\Control\RadioManagement",
+            "Radio Management",
+        );
+
+        // ============================================
+        // STEP D.6: Add AllowStart entries
+        // ============================================
+        // In WinPE, services need explicit AllowStart entries under Setup
+        // to be allowed to start. Without these, "net start wlansvc" may fail.
+        println!("  Adding AllowStart entries for WiFi services...");
+
+        let allow_start_services = ["dnscache", "nlasvc", "wcmsvc", "netprofm", "WlanSvc"];
+        for svc in &allow_start_services {
+            let key = format!(r"HKLM\PE-SYSTEM\Setup\AllowStart\{}", svc);
+            // AllowStart entries are just empty keys (REG_NONE) — no values needed
+            let _ = Command::new("reg").args(["add", &key, "/f"]).output();
+            println!("    AllowStart: {}", svc);
+        }
+
+        // ============================================
+        // STEP D.7: Write NetworkSetup2 filter class values
+        // ============================================
+        // These FilterClass values tell the network stack how WFPLWFS filters
+        // should be ordered. Required for NativeWifiP and WlanSvc to work.
+        println!("  Writing NetworkSetup2 FilterClass values...");
+
+        let filter_guids = [
+            "{3BFD7820-D65C-4C1B-9FEA-983A019639EA}",
+            "{B70D6460-3635-4D42-B866-B8AB1A24454C}",
+            "{E475CF9A-60CD-4439-A75F-0079CE0E18A1}",
+        ];
+        for guid in &filter_guids {
+            let key = format!(
+                r"HKLM\PE-SYSTEM\ControlSet001\Control\NetworkSetup2\Filters\{}\Kernel",
+                guid
+            );
+            let _ = Command::new("reg").args([
+                "add", &key, "/v", "FilterClass",
+                "/t", "REG_SZ", "/d", "ms_medium_converter_top", "/f",
+            ]).output();
+        }
+        println!("    Set FilterClass for 3 WFPLWFS filters");
+
+        println!("  SYSTEM hive registry copy complete");
+    } else {
+        println!("  Warning: Could not load SYSTEM hives for registry copy");
+        println!("  WiFi registry entries will be missing — WiFi will not work");
+    }
+
+    // Always unload SYSTEM hives (even if there were errors)
+    let _ = Command::new("reg").args(["unload", r"HKLM\SRC-SYSTEM"]).output();
+    let _ = Command::new("reg").args(["unload", r"HKLM\PE-SYSTEM"]).output();
+    println!("  Unloaded SYSTEM hives");
+
+    // ============================================
+    // STEP D.8: Copy SOFTWARE hive entries
+    // ============================================
+    // The SOFTWARE hive contains WlanSvc/wcmsvc configuration, netsh helper
+    // registration, svchost group assignments, and the 24H2 WiFi fix.
+
+    println!("  Copying SOFTWARE hive entries...");
+
+    let src_sw_loaded = if src_software_hive.exists() {
+        load_hive(r"HKLM\SRC-SOFTWARE", &src_software_hive)
+    } else {
+        println!("  Source SOFTWARE hive not found — using PE hive only");
+        false
+    };
+
+    let pe_sw_loaded = if pe_software_hive.exists() {
+        load_hive(r"HKLM\PE-SOFTWARE", &pe_software_hive)
+    } else {
+        println!("  Warning: PE SOFTWARE hive not found");
+        false
+    };
+
+    if pe_sw_loaded {
+        // Copy SOFTWARE subtrees from install.wim if available
+        if src_sw_loaded {
+            // WlanSvc and wcmsvc configuration
+            reg_copy_subtree(
+                r"HKLM\SRC-SOFTWARE\Microsoft\WlanSvc",
+                r"HKLM\PE-SOFTWARE\Microsoft\WlanSvc",
+                "WlanSvc SOFTWARE config",
+            );
+            reg_copy_subtree(
+                r"HKLM\SRC-SOFTWARE\Microsoft\wcmsvc",
+                r"HKLM\PE-SOFTWARE\Microsoft\wcmsvc",
+                "wcmsvc SOFTWARE config",
+            );
+            reg_copy_subtree(
+                r"HKLM\SRC-SOFTWARE\Policies\Microsoft\Windows\WcmSvc",
+                r"HKLM\PE-SOFTWARE\Policies\Microsoft\Windows\WcmSvc",
+                "WCM service policies",
+            );
+        }
+
+        // Register netsh wlan helper DLL (enables "netsh wlan show networks" etc.)
+        let netsh_path = r"HKLM\PE-SOFTWARE\Microsoft\NetSh";
+        let _ = Command::new("reg").args(["add", netsh_path, "/v", "wlancfg",
+            "/t", "REG_SZ", "/d", "wlancfg.dll", "/f"]).output();
+        println!("    Added netsh wlan helper registration");
+
+        // Add wlansvc to the LocalSystemNetworkRestricted svchost group
+        // This tells svchost.exe which services belong to this group.
+        // We use PowerShell to safely append to the existing MULTI_SZ value.
+        let ps_cmd = concat!(
+            "$path = 'HKLM:\\PE-SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Svchost'; ",
+            "$val = (Get-ItemProperty -Path $path -Name 'LocalSystemNetworkRestricted' ",
+            "-ErrorAction SilentlyContinue).LocalSystemNetworkRestricted; ",
+            "$add = @('WlanSvc','Wcmsvc','dot3svc'); ",
+            "if ($val) { ",
+            "  foreach ($s in $add) { if ($val -notcontains $s) { $val = @($val) + $s } }; ",
+            "  Set-ItemProperty -Path $path -Name 'LocalSystemNetworkRestricted' -Value $val -Type MultiString ",
+            "} else { ",
+            "  New-ItemProperty -Path $path -Name 'LocalSystemNetworkRestricted' ",
+            "  -Value $add -PropertyType MultiString -Force ",
+            "}"
+        );
+        let _ = Command::new("powershell")
+            .args(["-NoProfile", "-Command", ps_cmd])
+            .output();
+        println!("    Added WlanSvc/Wcmsvc/dot3svc to svchost group");
+
+        // ============================================
+        // STEP D.9: Windows 11 24H2 WiFi fix
+        // ============================================
+        // Windows 11 24H2 introduced a CapabilityAccessManager check that
+        // causes a BLANK WiFi network list if the wlanLocationBypass
+        // capability isn't present. This fixes it by setting RequireWindowsCert=0.
+        // Reference: PhoenixPE issue #147
+        let cap_key = r"HKLM\PE-SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\Capabilities\wlanLocationBypass";
+        let _ = Command::new("reg").args([
+            "add", cap_key, "/v", "RequireWindowsCert",
+            "/t", "REG_DWORD", "/d", "0", "/f",
+        ]).output();
+        println!("    Added 24H2 WiFi fix (wlanLocationBypass)");
+
+        println!("  SOFTWARE hive registry copy complete");
+    }
+
+    // Always unload SOFTWARE hives
+    let _ = Command::new("reg").args(["unload", r"HKLM\SRC-SOFTWARE"]).output();
+    let _ = Command::new("reg").args(["unload", r"HKLM\PE-SOFTWARE"]).output();
+    println!("  Unloaded SOFTWARE hives");
 
     println!("--- WiFi/WLAN injection complete ---\n");
     println!("  At PE boot, the launcher will run 'net start wlansvc' to activate WiFi.");
